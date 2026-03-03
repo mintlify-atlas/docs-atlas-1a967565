@@ -1,0 +1,104 @@
+{
+  "projectType": "saas",
+  "projectName": "Borrow Recovery",
+  "projectDescription": "Recovery UI for discovering and operating EVM ZeroDev Kernel loan wallets across multiple DeFi protocols.",
+  "theme": "aspen",
+  "primaryColor": "#F7931A",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "prerequisites"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/wallet-scanning",
+              "features/position-loading",
+              "features/rescue-operations"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/wallet-recovery",
+              "guides/aave-operations",
+              "guides/morpho-operations",
+              "guides/bundler-configuration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Technical Reference",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/kernel-accounts",
+              "architecture/account-abstraction",
+              "architecture/protocol-integration"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "api/kernel",
+              "api/user-operations",
+              "api/aave",
+              "api/morpho",
+              "api/chains"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Help",
+            "pages": [
+              "resources/troubleshooting",
+              "resources/faq",
+              "resources/safety"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-chain wallet scanning (Ethereum, Base, Arbitrum, BNB Chain)",
+    "ZeroDev Kernel v3.3 smart account address derivation",
+    "Aave V3 position reading and rescue operations",
+    "Morpho Blue position reading and rescue operations",
+    "ERC-4337 UserOperation construction and submission",
+    "Frontend-only architecture with no backend dependencies",
+    "Bundler integration for gas estimation and submission",
+    "Multi-protocol rescue actions (repay, withdraw, transfer)"
+  ],
+  "publicApiSurface": [
+    "deriveKernelAddressV3_3FromEOA(owner, index)",
+    "submitKernelUserOperationV07(params)",
+    "encodeAaveRepay(params)",
+    "encodeAaveWithdraw(params)",
+    "encodeMorphoBluePosition(marketId, user)",
+    "decodeMorphoBluePosition(result)",
+    "getChainConfig(chainId)",
+    "SUPPORTED_CHAINS",
+    "CHAIN_ASSETS",
+    "KERNEL_V3_3_FACTORY_ADDRESS",
+    "ECDSA_VALIDATOR_ADDRESS",
+    "ENTRYPOINT_V07_ADDRESS"
+  ]
+}
