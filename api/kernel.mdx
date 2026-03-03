@@ -48,6 +48,75 @@ const kernelAddress = deriveKernelAddressV3_3FromEOA(ownerAddress, 0n);
 - Combines init data with index to create a unique salt
 - Computes contract address from factory, bytecode hash, and salt
 
+---
+
+### encodeKernelExecuteCalls
+
+Encodes Kernel v3.3 `execute(bytes32 execMode, bytes executionCalldata)` for single or batched calls using the ZeroDev SDK.
+
+```typescript
+async function encodeKernelExecuteCalls(
+  calls: readonly KernelCall[]
+): Promise<Hex>
+```
+
+<ParamField path="calls" type="readonly KernelCall[]" required>
+  Array of calls to execute through the Kernel account
+</ParamField>
+
+<ResponseField name="returns" type="Promise<Hex>">
+  Encoded calldata for Kernel.execute() supporting single or batch execution
+</ResponseField>
+
+**KernelCall Type:**
+
+```typescript
+type KernelCall = {
+  target: Address;
+  value?: bigint | undefined;
+  callData?: Hex | undefined;
+};
+```
+
+**Example - Single Call:**
+
+```typescript
+import { encodeKernelExecuteCalls } from "@/lib/protocols/kernel";
+import { encodeErc20Transfer } from "@/lib/protocols/erc20";
+
+const kernelCallData = await encodeKernelExecuteCalls([
+  {
+    target: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
+    callData: encodeErc20Transfer(recipientAddress, 1000000n)
+  }
+]);
+```
+
+**Example - Batched Calls (Aave Repay):**
+
+```typescript
+import { encodeKernelExecuteCalls } from "@/lib/protocols/kernel";
+import { encodeErc20Approve } from "@/lib/protocols/erc20";
+import { encodeAaveRepay, MAX_UINT256 } from "@/lib/protocols/aave";
+
+// Batch approve + repay into single UserOperation
+const kernelCallData = await encodeKernelExecuteCalls([
+  {
+    target: usdcAddress,
+    callData: encodeErc20Approve(aavePoolAddress, MAX_UINT256)
+  },
+  {
+    target: aavePoolAddress,
+    callData: encodeAaveRepay({
+      asset: usdcAddress,
+      amount: MAX_UINT256,
+      interestRateMode: 2n,
+      onBehalfOf: kernelAddress
+    })
+  }
+]);
+```
+
 ## Constants
 
 ### KERNEL_V3_3_FACTORY_ADDRESS

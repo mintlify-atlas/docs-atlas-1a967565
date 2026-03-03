@@ -236,6 +236,70 @@ type RpcRequest = (method: string, params?: unknown[] | object) => Promise<unkno
 
 JSON-RPC request function type for wallet provider calls.
 
+---
+
+### encodeEntryPointGetNonce
+
+Encodes calldata for the EntryPoint `getNonce()` function.
+
+```typescript
+function encodeEntryPointGetNonce(parameters: {
+  sender: Address;
+  key: bigint;
+}): Hex
+```
+
+<ParamField path="sender" type="Address" required>
+  The smart account address to query nonce for
+</ParamField>
+
+<ParamField path="key" type="bigint" required>
+  The nonce key (used for parallel execution paths)
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  Encoded calldata for EntryPoint.getNonce(address,uint192)
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { encodeEntryPointGetNonce } from "@/lib/protocols/entryPoint";
+
+const calldata = encodeEntryPointGetNonce({
+  sender: "0x1234...",
+  key: 0n
+});
+// Use with eth_call to query account nonce
+```
+
+---
+
+### decodeEntryPointGetNonce
+
+Decodes the result of an EntryPoint `getNonce()` call.
+
+```typescript
+function decodeEntryPointGetNonce(result: Hex): bigint
+```
+
+<ParamField path="result" type="Hex" required>
+  The raw result from eth_call
+</ParamField>
+
+<ResponseField name="returns" type="bigint">
+  The current nonce value
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { decodeEntryPointGetNonce } from "@/lib/protocols/entryPoint";
+
+const nonce = decodeEntryPointGetNonce("0x0000000000000000000000000000000000000000000000000000000000000005");
+// Returns: 5n
+```
+
 ## Constants
 
 ### ENTRYPOINT_V07_ADDRESS

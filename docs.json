@@ -7,6 +7,7 @@
     "light": "#F7931A",
     "dark": "#F7931A"
   },
+  "favicon": "/favicon.ico",
   "navbar": {
     "primary": {
       "type": "github",
@@ -69,6 +70,7 @@
               "api/user-operations",
               "api/aave",
               "api/morpho",
+              "api/erc20",
               "api/chains"
             ]
           }

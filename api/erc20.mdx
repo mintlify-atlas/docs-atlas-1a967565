@@ -1,0 +1,177 @@
+---
+title: "ERC-20 Token API"
+description: "ERC-20 token interaction utilities for encoding function calls and decoding responses"
+---
+
+## Overview
+
+Utilities for encoding ERC-20 token function calls and decoding responses. Supports balance queries, transfers, and approvals.
+
+## Functions
+
+### encodeErc20BalanceOf
+
+Encodes calldata for the ERC-20 `balanceOf()` function.
+
+```typescript
+function encodeErc20BalanceOf(owner: Address): Hex
+```
+
+<ParamField path="owner" type="Address" required>
+  The address to check the balance for
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  Encoded calldata for balanceOf(address)
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { encodeErc20BalanceOf } from "@/lib/protocols/erc20";
+
+const calldata = encodeErc20BalanceOf("0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb");
+// Use with eth_call to query token balance
+```
+
+---
+
+### decodeErc20BalanceOf
+
+Decodes the result of an ERC-20 `balanceOf()` call.
+
+```typescript
+function decodeErc20BalanceOf(result: Hex): bigint
+```
+
+<ParamField path="result" type="Hex" required>
+  The raw result from eth_call
+</ParamField>
+
+<ResponseField name="returns" type="bigint">
+  The token balance in smallest unit
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { decodeErc20BalanceOf } from "@/lib/protocols/erc20";
+
+const balance = decodeErc20BalanceOf("0x0000000000000000000000000000000000000000000000000de0b6b3a7640000");
+// Returns: 1000000000000000000n (1 token with 18 decimals)
+```
+
+---
+
+### encodeErc20Transfer
+
+Encodes calldata for the ERC-20 `transfer()` function.
+
+```typescript
+function encodeErc20Transfer(to: Address, amount: bigint): Hex
+```
+
+<ParamField path="to" type="Address" required>
+  The recipient address
+</ParamField>
+
+<ParamField path="amount" type="bigint" required>
+  The amount to transfer (in token's smallest unit)
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  Encoded calldata for transfer(address,uint256)
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { encodeErc20Transfer } from "@/lib/protocols/erc20";
+
+const transferCalldata = encodeErc20Transfer(
+  "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+  1000000n // Transfer 1 USDC (6 decimals)
+);
+```
+
+---
+
+### encodeErc20Approve
+
+Encodes calldata for the ERC-20 `approve()` function.
+
+```typescript
+function encodeErc20Approve(spender: Address, amount: bigint): Hex
+```
+
+<ParamField path="spender" type="Address" required>
+  The address authorized to spend tokens
+</ParamField>
+
+<ParamField path="amount" type="bigint" required>
+  The allowance amount (in token's smallest unit)
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  Encoded calldata for approve(address,uint256)
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { encodeErc20Approve } from "@/lib/protocols/erc20";
+
+// Approve Aave Pool to spend USDC
+const approveCalldata = encodeErc20Approve(
+  "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2", // Aave Pool
+  1000000n // Approve 1 USDC
+);
+```
+
+## Usage Example
+
+Complete workflow for checking balance and transferring tokens:
+
+```typescript
+import {
+  encodeErc20BalanceOf,
+  decodeErc20BalanceOf,
+  encodeErc20Transfer
+} from "@/lib/protocols/erc20";
+
+// 1. Check balance
+const balanceCalldata = encodeErc20BalanceOf(walletAddress);
+const balanceResult = await provider.request({
+  method: "eth_call",
+  params: [
+    {
+      to: tokenAddress,
+      data: balanceCalldata
+    },
+    "latest"
+  ]
+});
+const balance = decodeErc20BalanceOf(balanceResult as Hex);
+
+// 2. Transfer tokens
+const transferCalldata = encodeErc20Transfer(recipientAddress, balance);
+// Use with Kernel execution or direct transaction
+```
+
+## Type Definitions
+
+### Address
+
+```typescript
+type Address = `0x${string}`;
+```
+
+A checksummed Ethereum address starting with `0x`.
+
+### Hex
+
+```typescript
+type Hex = `0x${string}`;
+```
+
+A hexadecimal string starting with `0x`.
