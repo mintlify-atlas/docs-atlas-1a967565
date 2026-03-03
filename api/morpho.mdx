@@ -1,0 +1,160 @@
+---
+title: "Morpho Protocol API"
+description: "Morpho Blue protocol utilities for encoding and decoding position queries"
+---
+
+## Overview
+
+Utilities for interacting with Morpho Blue protocol, specifically for querying user positions in lending markets.
+
+## Functions
+
+### encodeMorphoBluePosition
+
+Encodes calldata for the Morpho Blue `position()` view function.
+
+```typescript
+function encodeMorphoBluePosition(marketId: Hex, user: Address): Hex
+```
+
+<ParamField path="marketId" type="Hex" required>
+  The unique identifier (bytes32 hash) of the Morpho Blue market
+</ParamField>
+
+<ParamField path="user" type="Address" required>
+  The address of the user to query
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  Encoded calldata for MorphoBlue.position(marketId, user)
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { encodeMorphoBluePosition } from "@/lib/protocols/morpho";
+
+const marketId = "0x1234567890abcdef..." as Hex; // bytes32 market ID
+const userAddress = "0x1234...";
+
+const calldata = encodeMorphoBluePosition(marketId, userAddress);
+// Use with eth_call to read user's position
+```
+
+### decodeMorphoBluePosition
+
+Decodes the result from the Morpho Blue `position()` view function.
+
+```typescript
+function decodeMorphoBluePosition(result: Hex): MorphoBluePosition
+```
+
+<ParamField path="result" type="Hex" required>
+  The raw return data from MorphoBlue.position()
+</ParamField>
+
+<ResponseField name="returns" type="MorphoBluePosition">
+  Decoded position data object
+</ResponseField>
+
+**Example:**
+
+```typescript
+import {
+  encodeMorphoBluePosition,
+  decodeMorphoBluePosition,
+} from "@/lib/protocols/morpho";
+import { jsonRpcFetch } from "@/lib/rpc/jsonRpc";
+
+const marketId = "0x1234567890abcdef..." as Hex;
+const calldata = encodeMorphoBluePosition(marketId, "0x1234...");
+
+const result = await jsonRpcFetch<Hex>(rpcUrl, "eth_call", [
+  { to: morphoBlueAddress, data: calldata },
+  "latest",
+]);
+
+const position = decodeMorphoBluePosition(result);
+console.log({
+  supplyShares: position.supplyShares,
+  borrowShares: position.borrowShares,
+  collateral: position.collateral,
+});
+```
+
+## Type Definitions
+
+### MorphoBluePosition
+
+Represents a user's position in a specific Morpho Blue market.
+
+```typescript
+type MorphoBluePosition = {
+  supplyShares: bigint;
+  borrowShares: bigint;
+  collateral: bigint;
+};
+```
+
+<ParamField path="supplyShares" type="bigint">
+  The number of supply shares the user holds in the market. Supply shares represent a proportional claim on the total supplied assets.
+</ParamField>
+
+<ParamField path="borrowShares" type="bigint">
+  The number of borrow shares the user holds in the market. Borrow shares represent a proportional claim on the total borrowed amount.
+</ParamField>
+
+<ParamField path="collateral" type="bigint">
+  The amount of collateral the user has deposited in the market (in the collateral asset's smallest unit).
+</ParamField>
+
+## Usage Notes
+
+### Market IDs
+
+Morpho Blue markets are identified by a unique `bytes32` hash computed from market parameters:
+- Loan token address
+- Collateral token address
+- Oracle address
+- Interest rate model (IRM) address
+- Loan-to-value ratio (LLTV)
+
+Market IDs can be computed using the Morpho SDK or obtained from the Morpho Blue subgraph.
+
+### Shares vs. Assets
+
+Morpho Blue uses a shares-based accounting system:
+- **Supply shares**: Convert to asset amounts using the market's total supply and total supply shares
+- **Borrow shares**: Convert to asset amounts using the market's total borrow and total borrow shares
+
+To convert shares to assets, you need to query additional market state from the Morpho Blue contract.
+
+### Example: Complete Position Query
+
+```typescript
+import { encodeMorphoBluePosition, decodeMorphoBluePosition } from "@/lib/protocols/morpho";
+import { getChainConfig } from "@/lib/chains";
+import { jsonRpcFetch } from "@/lib/rpc/jsonRpc";
+
+async function queryMorphoPosition(chainId: number, marketId: Hex, user: Address) {
+  const chainConfig = getChainConfig(chainId);
+  if (!chainConfig?.morphoBlueAddress) {
+    throw new Error("Morpho Blue not supported on this chain");
+  }
+
+  const calldata = encodeMorphoBluePosition(marketId, user);
+  const result = await jsonRpcFetch<Hex>(chainConfig.rpcUrl, "eth_call", [
+    { to: chainConfig.morphoBlueAddress, data: calldata },
+    "latest",
+  ]);
+
+  return decodeMorphoBluePosition(result);
+}
+
+// Usage
+const position = await queryMorphoPosition(
+  1, // Ethereum mainnet
+  "0x1234567890abcdef..." as Hex,
+  "0x1234..."
+);
+```

@@ -1,0 +1,105 @@
+---
+title: "Kernel Utilities"
+description: "Kernel v3.3 address derivation utilities and constants for ZeroDev account abstraction"
+---
+
+## Overview
+
+Utilities for deriving Kernel v3.3 smart account addresses from EOA owners and accessing ZeroDev Kernel constants.
+
+## Functions
+
+### deriveKernelAddressV3_3FromEOA
+
+Derives a deterministic Kernel v3.3 smart account address from an EOA (Externally Owned Account) owner address.
+
+```typescript
+function deriveKernelAddressV3_3FromEOA(
+  owner: Address,
+  index: bigint
+): Address
+```
+
+<ParamField path="owner" type="Address" required>
+  The EOA address that will own the Kernel smart account
+</ParamField>
+
+<ParamField path="index" type="bigint" required>
+  The account index for deriving multiple accounts from the same owner (typically `0n` for the first account)
+</ParamField>
+
+<ResponseField name="returns" type="Address">
+  The deterministic Kernel v3.3 smart account address
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { deriveKernelAddressV3_3FromEOA } from "@/lib/kernel/deriveKernelAddress";
+
+const ownerAddress = "0x1234...";
+const kernelAddress = deriveKernelAddressV3_3FromEOA(ownerAddress, 0n);
+```
+
+**Implementation Details:**
+
+- Uses CREATE2 opcode for deterministic address derivation
+- Encodes Kernel v3.3 initialization data with ECDSA validator
+- Combines init data with index to create a unique salt
+- Computes contract address from factory, bytecode hash, and salt
+
+## Constants
+
+### KERNEL_V3_3_FACTORY_ADDRESS
+
+```typescript
+export const KERNEL_V3_3_FACTORY_ADDRESS: Address
+```
+
+The factory contract address used to deploy Kernel v3.3 accounts via CREATE2.
+
+### KERNEL_V3_3_IMPLEMENTATION_ADDRESS
+
+```typescript
+export const KERNEL_V3_3_IMPLEMENTATION_ADDRESS: Address
+```
+
+The implementation contract address for Kernel v3.3 accounts (proxy pattern).
+
+### KERNEL_V3_3_INIT_CODE_HASH
+
+```typescript
+export const KERNEL_V3_3_INIT_CODE_HASH: Hex
+```
+
+The initialization code hash for Kernel v3.3, used in CREATE2 address derivation.
+
+### ECDSA_VALIDATOR_ADDRESS
+
+```typescript
+export const ECDSA_VALIDATOR_ADDRESS: Address
+```
+
+The validator contract address for ECDSA signature validation in Kernel v3.3 accounts. This validator is used as the default SECONDARY validator during account initialization.
+
+**Derived from:**
+- EntryPoint v0.7
+- Kernel version v3.3
+
+## Type Definitions
+
+### Address
+
+```typescript
+type Address = `0x${string}`
+```
+
+Ethereum address format (checksummed hex string).
+
+### Hex
+
+```typescript
+type Hex = `0x${string}`
+```
+
+Hexadecimal string format.

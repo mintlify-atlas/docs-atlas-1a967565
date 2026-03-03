@@ -1,0 +1,346 @@
+---
+title: "Morpho Blue Operations"
+description: "Guide to managing Morpho Blue positions and executing rescue operations"
+---
+
+This guide covers how to interact with Morpho Blue markets, read position data, and execute rescue operations for repaying debt and withdrawing collateral.
+
+## Supported Morpho Markets
+
+Borrow Recovery currently supports:
+
+- **Market ID**: `0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836`
+- **Available on**: Base (Chain ID: 8453)
+
+<Note>
+  Each Morpho Blue market is an isolated lending pool with specific collateral and loan assets, LTV, and oracle configuration.
+</Note>
+
+## Understanding Morpho Positions
+
+### Position Data Structure
+
+Morpho Blue stores position data as:
+
+```typescript
+interface MorphoBluePosition {
+  supplyShares: bigint;   // Shares of supplied assets
+  borrowShares: bigint;   // Shares of borrowed assets
+  collateral: bigint;     // Collateral amount in base units
+}
+```
+
+### Reading Position Data
+
+The app reads your position using the `position` view function:
+
+```typescript
+import { encodeMorphoBluePosition } from "@/lib/protocols/morpho";
+
+const callData = encodeMorphoBluePosition(
+  marketId,
+  kernelAddress
+);
+
+const result = await provider.request({
+  method: "eth_call",
+  params: [
+    {
+      to: morphoBlueAddress,
+      data: callData,
+    },
+    "latest",
+  ],
+});
+
+const position = decodeMorphoBluePosition(result);
+// position.collateral
+// position.borrowShares
+```
+
+## Morpho Rescue Actions
+
+### Withdraw Collateral
+
+Withdraw collateral from a Morpho Blue market.
+
+<Steps>
+  <Step title="Select Action">
+    In the Morpho rescue actions section:
+    1. Set **Action** dropdown to **Withdraw collateral**
+    2. Choose **Withdraw all collateral** or enter a custom amount
+  </Step>
+
+  <Step title="Execute Withdrawal">
+    Click **Execute Morpho action via Kernel**
+
+    The app builds withdrawal transactions using backend-compatible logic:
+    ```typescript
+    const protocolTxs = await buildMorphoWithdrawTxsWithBackendLogic({
+      provider: ethersProvider,
+      market: marketConfig,
+      userAddress: kernelAddress,
+      amount: amountString, // "-1" for max, or decimal string
+    });
+    ```
+
+    These transactions are then wrapped in a Kernel execute call and submitted as a UserOperation.
+  </Step>
+
+  <Step title="Confirm Result">
+    - The app displays the UserOp hash
+    - Wait for the transaction to be mined
+    - Click **Load positions** to verify reduced collateral
+  </Step>
+</Steps>
+
+### Repay Debt
+
+Repay borrowed assets to reduce your Morpho debt.
+
+<Steps>
+  <Step title="Fund the Wallet">
+    Before repaying, ensure your Kernel wallet has enough loan asset (typically USDC).
+
+    <Warning>
+      When using **Repay all debt**, keep a little extra loan token in the wallet. Interest accrues in real time, so debt can increase slightly before execution.
+    </Warning>
+  </Step>
+
+  <Step title="Select Action">
+    In the Morpho rescue actions section:
+    1. Set **Action** dropdown to **Repay debt**
+    2. Choose **Repay all debt** or enter a custom amount
+  </Step>
+
+  <Step title="Execute Repay">
+    Click **Execute Morpho action via Kernel**
+
+    The app builds repay transactions using backend-compatible logic:
+    ```typescript
+    const protocolTxs = await buildMorphoRepayTxsWithBackendLogic({
+      provider: ethersProvider,
+      market: marketConfig,
+      userAddress: kernelAddress,
+      amount: amountString, // "-1" for max, or decimal string
+    });
+    ```
+
+    This may include:
+    1. Token approval transaction (if needed)
+    2. Morpho repay transaction
+
+    All transactions are batched into a single UserOperation.
+  </Step>
+
+  <Step title="Confirm Result">
+    - The app shows status updates and UserOp hash
+    - Wait for confirmation
+    - Click **Load positions** to verify reduced debt
+  </Step>
+</Steps>
+
+## Code Examples
+
+### Reading Morpho Position
+
+From `lib/protocols/morpho.ts`:
+
+```typescript
+import { encodeFunctionData, decodeFunctionResult, parseAbi } from "viem";
+
+const morphoBlueAbi = parseAbi([
+  "function position(bytes32 marketId, address user) view returns (uint256 supplyShares, uint256 borrowShares, uint256 collateral)",
+]);
+
+export function encodeMorphoBluePosition(
+  marketId: Hex,
+  user: Address
+): Hex {
+  return encodeFunctionData({
+    abi: morphoBlueAbi,
+    functionName: "position",
+    args: [marketId, user],
+  });
+}
+
+export function decodeMorphoBluePosition(result: Hex): MorphoBluePosition {
+  const [supplyShares, borrowShares, collateral] = decodeFunctionResult({
+    abi: morphoBlueAbi,
+    functionName: "position",
+    data: result,
+  });
+
+  return { supplyShares, borrowShares, collateral };
+}
+```
+
+### Building Morpho Withdraw Transaction
+
+From `app/wallet/[index]/_components/MorphoRescueActions.tsx`:
+
+```typescript
+import { providers } from "ethers";
+import { buildMorphoWithdrawTxsWithBackendLogic } from "@/lib/protocols/morphoBackendParity";
+import { encodeKernelExecuteCalls } from "@/lib/protocols/kernel";
+
+// Get connected wallet provider
+const connectedProvider = await getProvider();
+const ethersProvider = new providers.Web3Provider(
+  connectedProvider as providers.ExternalProvider
+);
+
+// Build withdrawal transactions
+const protocolTxs = await buildMorphoWithdrawTxsWithBackendLogic({
+  provider: ethersProvider,
+  market: marketConfig,
+  userAddress: kernelAddress,
+  amount: amountForProtocol, // "-1" or decimal string
+});
+
+// Wrap in Kernel execute call
+const kernelCallData = await encodeKernelExecuteCalls(
+  protocolTxs.map((call) => ({
+    target: call.to as Address,
+    callData: call.data as Hex,
+    value: BigInt(call.value),
+  }))
+);
+
+// Submit as UserOperation
+const userOpHash = await submitKernelUserOperationV07({
+  bundlerUrl,
+  chainRpcUrl: chainConfig.rpcUrl,
+  owner,
+  kernelAddress,
+  chainId,
+  kernelCallData,
+  request,
+  onStatus: setStatus,
+});
+```
+
+### Building Morpho Repay Transaction
+
+From `app/wallet/[index]/_components/MorphoRescueActions.tsx`:
+
+```typescript
+import { buildMorphoRepayTxsWithBackendLogic } from "@/lib/protocols/morphoBackendParity";
+
+const protocolTxs = await buildMorphoRepayTxsWithBackendLogic({
+  provider: ethersProvider,
+  market: marketConfig,
+  userAddress: kernelAddress,
+  amount: amountForProtocol, // "-1" for max repay
+});
+
+// Rest of flow is identical to withdraw
+const kernelCallData = await encodeKernelExecuteCalls(
+  protocolTxs.map((call) => ({
+    target: call.to as Address,
+    callData: call.data as Hex,
+    value: BigInt(call.value),
+  }))
+);
+```
+
+## Market Configuration
+
+Each Morpho Blue market has specific configuration:
+
+```typescript
+interface MorphoParityMarketConfig {
+  marketId: Hex;              // Unique market identifier
+  loanToken: Address;         // Borrowed asset (e.g., USDC)
+  collateralToken: Address;   // Collateral asset (e.g., WETH)
+  oracle: Address;            // Price oracle address
+  irm: Address;               // Interest rate model
+  lltv: bigint;               // Liquidation LTV (e.g., 86% = 860000000000000000)
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Understanding Shares vs Assets">
+    Morpho uses a **share-based accounting** system:
+    
+    - `borrowShares`: Your share of total market debt
+    - Actual debt = `borrowShares × sharePrice`
+    - Share price increases over time as interest accrues
+    - Always check USD-denominated debt, not just shares
+  </Accordion>
+
+  <Accordion title="Handling Max Repayment">
+    When using **Repay all debt** (`amount: "-1"`):
+    
+    - The backend logic calculates exact debt amount
+    - Adds a small buffer to account for interest accrual
+    - Still fund 1-2% extra tokens to be safe
+    - Excess tokens remain in the wallet after repayment
+  </Accordion>
+
+  <Accordion title="Gas Considerations">
+    Morpho operations are submitted as a **single batched UserOperation**:
+    
+    - Withdraw: 1 transaction in the batch
+    - Repay: 1-2 transactions (approve + repay) in the batch
+    - More gas-efficient than separate UserOps
+    - The app adds a 50% buffer to gas estimates
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Morpho USD fields show '—'">
+    This indicates a data fetching issue:
+    
+    1. Click **Load positions** again
+    2. Check browser console for detailed error messages
+    3. The app tries multiple fallback read methods:
+       - Public RPC read (backend-style)
+       - Wallet provider read
+       - Raw onchain contract read
+    4. Ensure you're on the correct chain (Base for the supported market)
+  </Accordion>
+
+  <Accordion title="'Insufficient collateral' error">
+    Morpho prevents withdrawals that would exceed the Loan-to-Value (LTV) ratio:
+    
+    - Reduce withdrawal amount
+    - Repay some debt to free up collateral
+    - Check current LTV vs market's liquidation LTV (LLTV)
+  </Accordion>
+
+  <Accordion title="'Building Morpho calls failed' error">
+    This occurs during transaction construction:
+    
+    - Verify the wallet provider is connected
+    - Check that you're on the correct chain
+    - Ensure the market configuration is valid
+    - Try switching to a different RPC endpoint
+  </Accordion>
+</AccordionGroup>
+
+## Morpho vs Aave Differences
+
+| Feature | Morpho Blue | Aave V3 |
+|---------|-------------|----------|
+| **Architecture** | Isolated markets | Pooled liquidity |
+| **Interest Rate** | Per-market IRM | Pool-wide rates |
+| **Health Factor** | Implicit (LTV-based) | Explicit value |
+| **Rescue Flow** | Single batched UserOp | 2 separate UserOps (for repay) |
+| **Position Data** | Share-based | Direct balances |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Wallet Recovery" icon="wallet" href="/guides/wallet-recovery">
+    Return to the full recovery workflow
+  </Card>
+
+  <Card title="Aave Operations" icon="coins" href="/guides/aave-operations">
+    Learn about Aave V3 rescue actions
+  </Card>
+</CardGroup>

@@ -1,0 +1,282 @@
+---
+title: Position Loading
+description: Load and view Aave and Morpho loan positions from your Kernel wallets
+---
+
+## Overview
+
+After [scanning for wallets](/features/wallet-scanning), you can load detailed position data from supported lending protocols. Borrow Recovery currently supports:
+
+- **Aave V3** (Ethereum, Base, Arbitrum, BSC)
+- **Morpho Blue** (Base only)
+
+## Loading Positions
+
+<Steps>
+  <Step title="Navigate to Wallet Details">
+    Click any wallet from the scan results or navigate directly to `/wallet/{index}` where `{index}` is your wallet index.
+  </Step>
+  
+  <Step title="Select Chain">
+    Choose the chain where your loan is deployed. The app will auto-detect the chain if the wallet is deployed.
+  </Step>
+  
+  <Step title="Click Load Positions">
+    The app will:
+    1. Switch your wallet to the selected chain (if needed)
+    2. Read the Kernel wallet's native balance (for gas)
+    3. Query token balances (USDC, cbBTC/WBTC)
+    4. Fetch Aave position data
+    5. Fetch Morpho position data (Base only)
+  </Step>
+</Steps>
+
+<Warning>
+Your browser wallet must be connected and switched to the correct chain. You'll be prompted to approve the network switch if needed.
+</Warning>
+
+## Chain Auto-Detection
+
+When you first load a wallet page, the app automatically scans all supported chains to find where the Kernel wallet is deployed:
+
+```typescript
+// From: app/wallet/[index]/page.tsx
+const checks = SUPPORTED_CHAINS.map(async (c) => {
+  try {
+    const res = await fetch(c.rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_getCode",
+        params: [kernelAddress, "latest"],
+      }),
+    });
+    const json = await res.json();
+    const code = json?.result as string | undefined;
+    return code && code !== "0x" ? c.id : null;
+  } catch {
+    return null;
+  }
+});
+
+const results = await Promise.all(checks);
+const deployedChain = results.find((id): id is SupportedChainId => id !== null);
+if (deployedChain && !manualChainSelectionRef.current) {
+  setSelectedChainId(deployedChain);
+}
+```
+
+## Data Displayed
+
+### Wallet Balances
+
+The app displays three key balances:
+
+1. **Native token** (ETH/BNB): Required for gas to execute UserOperations
+2. **USDC**: The debt asset, needed for repayment
+3. **Collateral** (cbBTC/WBTC): The asset supplied to the lending protocol
+
+<Info>
+If the native balance is 0, you'll see a warning. You must send gas to the Kernel wallet address before executing rescue operations.
+</Info>
+
+### Aave V3 Position Data
+
+For Aave positions, the app fetches:
+
+#### Account Summary
+```typescript
+// From: app/wallet/[index]/page.tsx
+const summary = await fetchAaveUserSummaryWithBackendLogic({
+  chain: refreshChain,
+  walletAddress: kernelAddress,
+});
+```
+
+This includes:
+- **Health Factor**: Ratio of collateral to debt (liquidation occurs below 1.0)
+- **LTV**: Current loan-to-value ratio
+- **Liquidation Threshold**: The LTV at which liquidation is triggered
+
+#### Raw Position Data
+
+The app also queries the Aave Pool contract directly:
+
+```typescript
+// Get user account data from Aave Pool
+const aaveRes = await request("eth_call", [
+  { 
+    to: refreshChain.aaveV3PoolAddress, 
+    data: encodeAaveGetUserAccountData(kernelAddress) 
+  }, 
+  "latest"
+]);
+const accountData = decodeAaveGetUserAccountData(aaveRes);
+```
+
+#### Token Balances (aToken & Debt Tokens)
+
+```typescript
+// Get reserve token addresses
+const collateralReserveTokens = decodeAaveGetReserveTokensAddresses(
+  collateralReserveTokensRes
+);
+const debtReserveTokens = decodeAaveGetReserveTokensAddresses(
+  debtReserveTokensRes
+);
+
+// Query aToken balance (collateral)
+const aTokenBalRes = await request("eth_call", [
+  { 
+    to: collateralReserveTokens.aTokenAddress, 
+    data: encodeErc20BalanceOf(kernelAddress) 
+  }, 
+  "latest"
+]);
+
+// Query variable debt token balance
+const variableDebtBalRes = await request("eth_call", [
+  { 
+    to: debtReserveTokens.variableDebtTokenAddress, 
+    data: encodeErc20BalanceOf(kernelAddress) 
+  }, 
+  "latest"
+]);
+```
+
+### Morpho Blue Position Data (Base Only)
+
+For Morpho positions on Base:
+
+```typescript
+// Get Morpho position
+const morphoRes = await request("eth_call", [
+  { 
+    to: refreshChain.morphoBlueAddress, 
+    data: encodeMorphoBluePosition(
+      MORPHO_BASE_MARKETS.cbBTC_USDC.marketId, 
+      kernelAddress
+    ) 
+  }, 
+  "latest"
+]);
+const position = decodeMorphoBluePosition(morphoRes);
+```
+
+This includes:
+- **Supply shares**: Your share of the lending pool
+- **Borrow shares**: Your share of the borrowing pool
+- **Collateral supplied**: Amount of cbBTC collateral
+- **Borrow amount**: Amount of USDC borrowed
+- **LTV**: Current loan-to-value ratio
+- **Health Factor**: Risk metric (liquidation threshold)
+- **Liquidation Price**: The price at which liquidation occurs
+
+## Understanding Health Factor
+
+The health factor is the most critical metric for loan positions:
+
+- **> 2.0**: Healthy position (displayed with dark background)
+- **1.2 - 2.0**: Moderate risk (displayed with gray background)
+- **< 1.2**: High risk (displayed with red background)
+- **< 1.0**: Liquidation will occur
+
+```typescript
+// Health factor display logic
+{aaveSummary?.healthFactor ? (
+  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+    Number(aaveSummary.healthFactor) > 2
+      ? "bg-zinc-900 text-white"
+      : Number(aaveSummary.healthFactor) > 1.2
+        ? "bg-zinc-200 text-zinc-900"
+        : "bg-red-500/10 text-red-700"
+  }`}>
+    HF: {aaveSummary.healthFactor}
+  </span>
+) : null}
+```
+
+## Position Loading Flow
+
+The complete position loading sequence:
+
+<Steps>
+  <Step title="Verify Network">
+    Check connected wallet's chain ID and switch if needed
+  </Step>
+  
+  <Step title="Read Native Balance">
+    Query native token balance using `eth_getBalance`
+  </Step>
+  
+  <Step title="Read ERC20 Balances">
+    Query USDC and collateral token balances
+  </Step>
+  
+  <Step title="Fetch Aave Data">
+    - Call `getUserAccountData` on Aave Pool
+    - Get reserve token addresses from Protocol Data Provider
+    - Query aToken and debt token balances
+    - Fetch computed summary from backend parity logic
+  </Step>
+  
+  <Step title="Fetch Morpho Data (Base only)">
+    - Call `position` on Morpho Blue contract
+    - Fetch computed summary with health metrics
+  </Step>
+</Steps>
+
+## Error Handling
+
+### Common Issues
+
+**"Invalid wallet index"**
+- The index parameter is not a valid positive integer
+- Navigate back to the scanner and select a valid wallet
+
+**"Connect your wallet first"**
+- Click the "Connect Wallet" button in the top right
+- Ensure you're using the EOA that created the loan wallets
+
+**"Switch your wallet to [Chain]"**
+- The position data requires reading from a specific chain
+- Approve the network switch request in your wallet
+- If the switch fails, manually switch networks in your wallet
+
+**"Unsupported chain"**
+- The selected chain is not supported by Borrow Recovery
+- Select a different chain from the dropdown
+
+## Stale Data Prevention
+
+The app uses request IDs to prevent race conditions when switching chains rapidly:
+
+```typescript
+const requestId = ++refreshRequestIdRef.current;
+const isStale = () => 
+  refreshRequestIdRef.current !== requestId || 
+  selectedChainIdRef.current !== refreshChainId;
+
+// Check before each state update
+if (isStale()) return;
+setNativeBalance(BigInt(nativeBalHex));
+```
+
+This ensures that fast chain switches don't display outdated data.
+
+## Next Steps
+
+Once positions are loaded:
+
+1. Review your health factor and loan metrics
+2. Check if the Kernel wallet has sufficient gas
+3. [Execute rescue operations](/features/rescue-operations) to manage your position
+
+## Code Reference
+
+- Wallet detail page: `app/wallet/[index]/page.tsx`
+- Aave backend logic: `lib/protocols/aaveBackendParity.ts`
+- Morpho backend logic: `lib/protocols/morphoBackendParity.ts`
+- Protocol encoders/decoders: `lib/protocols/aave.ts`, `lib/protocols/morpho.ts`

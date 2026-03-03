@@ -1,0 +1,247 @@
+---
+title: "UserOperation API"
+description: "ERC-4337 UserOperation construction, submission, and hashing utilities for EntryPoint v0.7"
+---
+
+## Overview
+
+Utilities for working with ERC-4337 UserOperations on EntryPoint v0.7, including submission to bundlers and hash computation.
+
+## Functions
+
+### submitKernelUserOperationV07
+
+Submits a UserOperation for a Kernel smart account to an ERC-4337 bundler. Handles gas estimation, nonce management, signature generation, and automatic retries.
+
+```typescript
+async function submitKernelUserOperationV07(parameters: {
+  bundlerUrl: string;
+  chainRpcUrl: string;
+  owner: Address;
+  kernelAddress: Address;
+  chainId: number;
+  kernelCallData: Hex;
+  request: RpcRequest;
+  onStatus?: ((status: string) => void) | undefined;
+}): Promise<Hex>
+```
+
+<ParamField path="bundlerUrl" type="string" required>
+  The ERC-4337 bundler RPC endpoint URL
+</ParamField>
+
+<ParamField path="chainRpcUrl" type="string" required>
+  The chain RPC endpoint URL for state queries
+</ParamField>
+
+<ParamField path="owner" type="Address" required>
+  The EOA owner address that will sign the UserOperation
+</ParamField>
+
+<ParamField path="kernelAddress" type="Address" required>
+  The Kernel smart account address sending the UserOperation
+</ParamField>
+
+<ParamField path="chainId" type="number" required>
+  The chain ID for the network
+</ParamField>
+
+<ParamField path="kernelCallData" type="Hex" required>
+  The encoded call data for the Kernel account to execute
+</ParamField>
+
+<ParamField path="request" type="RpcRequest" required>
+  JSON-RPC request function `(method: string, params?: unknown[] | object) => Promise<unknown>`
+</ParamField>
+
+<ParamField path="onStatus" type="(status: string) => void" optional>
+  Optional callback for status updates during submission process
+</ParamField>
+
+<ResponseField name="returns" type="Promise<Hex>">
+  The UserOperation hash returned by the bundler upon successful submission
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { submitKernelUserOperationV07 } from "@/lib/accountAbstraction/submitUserOpV07";
+
+const userOpHash = await submitKernelUserOperationV07({
+  bundlerUrl: "https://bundler.example.com",
+  chainRpcUrl: "https://rpc.example.com",
+  owner: "0x1234...",
+  kernelAddress: "0x5678...",
+  chainId: 1,
+  kernelCallData: "0xabcd...",
+  request: async (method, params) => {
+    // Your JSON-RPC implementation
+  },
+  onStatus: (status) => console.log(status),
+});
+```
+
+**Features:**
+
+- Verifies Kernel wallet deployment on-chain
+- Reads current nonce from EntryPoint
+- Fetches gas prices from bundler or falls back to chain RPC
+- Estimates gas limits with 50% safety buffer
+- Signs UserOperation hash via `personal_sign` or `eth_sign`
+- Automatic retry on nonce conflicts or gas price requirements
+- Provides detailed status callbacks throughout the process
+
+### getUserOperationHashV07
+
+Computes the ERC-4337 UserOperation hash for EntryPoint v0.7.
+
+```typescript
+function getUserOperationHashV07(parameters: {
+  userOperation: UserOperationV07;
+  entryPointAddress: Address;
+  chainId: number;
+}): Hex
+```
+
+<ParamField path="userOperation" type="UserOperationV07" required>
+  The UserOperation struct to hash
+</ParamField>
+
+<ParamField path="entryPointAddress" type="Address" required>
+  The EntryPoint contract address
+</ParamField>
+
+<ParamField path="chainId" type="number" required>
+  The chain ID for the network
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  The UserOperation hash that must be signed by the account owner
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { getUserOperationHashV07 } from "@/lib/accountAbstraction/userOpHashV07";
+import { ENTRYPOINT_V07_ADDRESS } from "@/lib/protocols/entryPoint";
+
+const userOpHash = getUserOperationHashV07({
+  userOperation: {
+    sender: "0x1234...",
+    nonce: 0n,
+    callData: "0xabcd...",
+    callGasLimit: 100000n,
+    verificationGasLimit: 200000n,
+    preVerificationGas: 50000n,
+    maxFeePerGas: 1000000000n,
+    maxPriorityFeePerGas: 1000000000n,
+    signature: "0x",
+  },
+  entryPointAddress: ENTRYPOINT_V07_ADDRESS,
+  chainId: 1,
+});
+```
+
+## Type Definitions
+
+### UserOperationV07
+
+ERC-4337 UserOperation struct for EntryPoint v0.7.
+
+```typescript
+type UserOperationV07 = {
+  sender: Address;
+  nonce: bigint;
+  callData: Hex;
+  callGasLimit: bigint;
+  verificationGasLimit: bigint;
+  preVerificationGas: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  signature: Hex;
+  factory?: Address | undefined;
+  factoryData?: Hex | undefined;
+  paymaster?: Address | undefined;
+  paymasterData?: Hex | undefined;
+  paymasterVerificationGasLimit?: bigint | undefined;
+  paymasterPostOpGasLimit?: bigint | undefined;
+};
+```
+
+<ParamField path="sender" type="Address" required>
+  The smart account address sending the UserOperation
+</ParamField>
+
+<ParamField path="nonce" type="bigint" required>
+  The nonce from EntryPoint.getNonce(sender, key)
+</ParamField>
+
+<ParamField path="callData" type="Hex" required>
+  The data to pass to the sender account's execution function
+</ParamField>
+
+<ParamField path="callGasLimit" type="bigint" required>
+  Gas limit for the execution call
+</ParamField>
+
+<ParamField path="verificationGasLimit" type="bigint" required>
+  Gas limit for verification step
+</ParamField>
+
+<ParamField path="preVerificationGas" type="bigint" required>
+  Gas to compensate bundler for pre-verification execution and calldata
+</ParamField>
+
+<ParamField path="maxFeePerGas" type="bigint" required>
+  Maximum fee per gas (EIP-1559)
+</ParamField>
+
+<ParamField path="maxPriorityFeePerGas" type="bigint" required>
+  Maximum priority fee per gas (EIP-1559)
+</ParamField>
+
+<ParamField path="signature" type="Hex" required>
+  Signature over the UserOperation hash
+</ParamField>
+
+<ParamField path="factory" type="Address" optional>
+  Account factory address (for undeployed accounts)
+</ParamField>
+
+<ParamField path="factoryData" type="Hex" optional>
+  Data to pass to factory for account creation
+</ParamField>
+
+<ParamField path="paymaster" type="Address" optional>
+  Paymaster address (for sponsored transactions)
+</ParamField>
+
+<ParamField path="paymasterData" type="Hex" optional>
+  Data to pass to paymaster
+</ParamField>
+
+<ParamField path="paymasterVerificationGasLimit" type="bigint" optional>
+  Gas limit for paymaster verification
+</ParamField>
+
+<ParamField path="paymasterPostOpGasLimit" type="bigint" optional>
+  Gas limit for paymaster post-operation
+</ParamField>
+
+### RpcRequest
+
+```typescript
+type RpcRequest = (method: string, params?: unknown[] | object) => Promise<unknown>
+```
+
+JSON-RPC request function type for wallet provider calls.
+
+## Constants
+
+### ENTRYPOINT_V07_ADDRESS
+
+```typescript
+const ENTRYPOINT_V07_ADDRESS: Address = "0x0000000071727De22E5E9d8BAf0edAc6f37da032"
+```
+
+The canonical EntryPoint v0.7 contract address.

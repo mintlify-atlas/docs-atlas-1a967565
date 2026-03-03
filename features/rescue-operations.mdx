@@ -1,0 +1,461 @@
+---
+title: Rescue Operations
+description: Execute repay, withdraw, and transfer operations via ERC-4337 UserOperations
+---
+
+## Overview
+
+Rescue operations allow you to manage your loan positions by executing actions on your Kernel smart account. All operations use ERC-4337 UserOperations submitted through a ZeroDev bundler.
+
+## Available Operations
+
+### Aave V3 Operations
+
+1. **Repay Debt**: Repay USDC debt to improve health factor
+2. **Withdraw Collateral**: Remove collateral (cbBTC/WBTC) from Aave
+
+### Morpho Blue Operations (Base Only)
+
+1. **Repay Debt**: Repay USDC debt to improve health factor
+2. **Withdraw Collateral**: Remove cbBTC collateral from Morpho
+
+### Transfer Operations
+
+1. **Transfer Out**: Send tokens from the Kernel wallet to your connected EOA
+
+## Prerequisites
+
+<Warning>
+Before executing rescue operations, ensure:
+
+1. The Kernel wallet has sufficient **native tokens** (ETH/BNB) for gas
+2. For repay operations, the Kernel wallet has the **repay asset** (USDC)
+3. You have your **ZeroDev Project ID** from dashboard.zerodev.app
+</Warning>
+
+### Funding the Kernel Wallet
+
+<Steps>
+  <Step title="Copy Kernel Address">
+    On the wallet detail page, click "Copy address" to copy the Kernel wallet address to your clipboard.
+  </Step>
+  
+  <Step title="Send Gas">
+    Send native tokens (ETH/BNB) to the Kernel address. Recommended amounts:
+    - Ethereum: 0.01 ETH
+    - Base: 0.001 ETH
+    - Arbitrum: 0.005 ETH
+    - BSC: 0.01 BNB
+  </Step>
+  
+  <Step title="Send Repay Tokens (if needed)">
+    If repaying debt, send USDC to the Kernel address. Send slightly more than your debt amount to account for accruing interest.
+  </Step>
+  
+  <Step title="Refresh Positions">
+    Click "Load positions" again to verify the balances updated.
+  </Step>
+</Steps>
+
+### ZeroDev Bundler Setup
+
+All rescue operations require a ZeroDev bundler:
+
+1. Go to [dashboard.zerodev.app](https://dashboard.zerodev.app/projects/general)
+2. Sign in and select your project (or create one)
+3. Copy the **Project ID** from the top right
+4. Paste it into the "ZeroDev Project ID or RPC URL" field
+
+<Info>
+You can paste either:
+- The full RPC URL: `https://rpc.zerodev.app/api/v3/{projectId}/chain/{chainId}`
+- Just the Project ID: `8bcedfbe-9a45-4067-b830-63c5e680ead6`
+
+The app will automatically construct the correct bundler URL for the selected chain.
+</Info>
+
+## How UserOperations Work
+
+### ERC-4337 Account Abstraction
+
+Kernel wallets use ERC-4337, which enables:
+
+- **Gas abstraction**: Pay for gas from the smart account itself
+- **Batched calls**: Execute multiple transactions atomically
+- **Custom validation**: Use ECDSA signatures from your EOA to authorize operations
+
+### UserOperation Lifecycle
+
+<Steps>
+  <Step title="Build Call Data">
+    The app encodes the protocol calls (e.g., Aave repay + approve) into Kernel's `execute` format.
+  </Step>
+  
+  <Step title="Estimate Gas">
+    The bundler estimates gas limits using `eth_estimateUserOperationGas`.
+  </Step>
+  
+  <Step title="Sign UserOp Hash">
+    Your EOA signs the UserOperation hash using `personal_sign` or `eth_sign`.
+  </Step>
+  
+  <Step title="Submit to Bundler">
+    The signed UserOperation is sent to the bundler via `eth_sendUserOperation`.
+  </Step>
+  
+  <Step title="Bundler Execution">
+    The bundler includes the UserOperation in a bundle transaction and submits it to the EntryPoint contract.
+  </Step>
+</Steps>
+
+### UserOperation Structure
+
+A UserOperation includes:
+
+```typescript
+type UserOperationV07 = {
+  sender: Address;              // Kernel wallet address
+  nonce: bigint;                // Sequential nonce from EntryPoint
+  callData: Hex;                // Encoded Kernel execute calls
+  callGasLimit: bigint;         // Gas limit for the call
+  verificationGasLimit: bigint; // Gas for signature verification
+  preVerificationGas: bigint;   // Gas overhead
+  maxFeePerGas: bigint;         // Max gas price
+  maxPriorityFeePerGas: bigint; // Priority fee
+  signature: Hex;               // ECDSA signature from owner
+};
+```
+
+## Executing Aave Operations
+
+### Repay Debt
+
+Repaying debt is a **two-step process**:
+
+<Steps>
+  <Step title="Approve USDC (UserOp 1)">
+    First UserOperation approves the Aave Pool to spend USDC:
+    
+    ```typescript
+    const approveCallData = encodeErc20Approve(poolAddress, MAX_UINT256);
+    const approveKernelCallData = await encodeKernelExecuteCalls([
+      { target: repayAsset.address, callData: approveCallData, value: 0n },
+    ]);
+    
+    const approveHash = await submitKernelUserOperationV07({
+      bundlerUrl,
+      chainRpcUrl: chain.rpcUrl,
+      owner,
+      kernelAddress,
+      chainId,
+      kernelCallData: approveKernelCallData,
+      request,
+      onStatus: (s) => setStatusSafe(`Step 1/2: ${s}`),
+    });
+    ```
+  </Step>
+  
+  <Step title="Wait for Approval">
+    The app polls the bundler for the UserOperation receipt:
+    
+    ```typescript
+    await waitForUserOp(bundlerUrl, approveHash);
+    ```
+  </Step>
+  
+  <Step title="Repay Debt (UserOp 2)">
+    Second UserOperation calls Aave's `repay` function:
+    
+    ```typescript
+    const repayCallData = encodeAaveRepay({
+      asset: repayAsset.address,
+      amount: rawAmount,          // MAX_UINT256 for "repay all"
+      interestRateMode: 2n,       // Variable rate
+      onBehalfOf: kernelAddress,
+    });
+    
+    const repayKernelCallData = await encodeKernelExecuteCalls([
+      { target: poolAddress, callData: repayCallData, value: 0n },
+    ]);
+    
+    const repayHash = await submitKernelUserOperationV07({
+      bundlerUrl,
+      chainRpcUrl: chain.rpcUrl,
+      owner,
+      kernelAddress,
+      chainId,
+      kernelCallData: repayKernelCallData,
+      request,
+      onStatus: (s) => setStatusSafe(`Step 2/2: ${s}`),
+    });
+    ```
+  </Step>
+</Steps>
+
+<Note>
+Why two UserOperations? Aave requires ERC20 approval before repayment. While Kernel supports batched calls, separating approve and repay ensures the approval is confirmed before attempting repayment.
+</Note>
+
+### Withdraw Collateral
+
+Withdrawing collateral is a **single UserOperation**:
+
+```typescript
+const withdrawCallData = encodeAaveWithdraw({
+  asset: collateralAsset.address,
+  amount: rawAmount,  // MAX_UINT256 for "withdraw all"
+  to: owner,          // Send collateral to your EOA
+});
+
+const withdrawKernelCallData = await encodeKernelExecuteCalls([
+  { target: poolAddress, callData: withdrawCallData, value: 0n },
+]);
+
+const withdrawHash = await submitKernelUserOperationV07({
+  bundlerUrl,
+  chainRpcUrl: chain.rpcUrl,
+  owner,
+  kernelAddress,
+  chainId,
+  kernelCallData: withdrawKernelCallData,
+  request,
+  onStatus: setStatusSafe,
+});
+```
+
+## Executing Morpho Operations
+
+Morpho operations use the Morpho backend parity logic to build transaction calls:
+
+### Repay Debt
+
+```typescript
+const connectedProvider = await getProvider();
+const ethersProvider = new providers.Web3Provider(
+  connectedProvider as providers.ExternalProvider,
+);
+
+const protocolTxs = await buildMorphoRepayTxsWithBackendLogic({
+  provider: ethersProvider,
+  market,
+  userAddress: kernelAddress,
+  amount: amountForProtocol,  // "-1" for max
+});
+
+const kernelCallData = await encodeKernelExecuteCalls(
+  protocolTxs.map((call) => ({
+    target: call.to as Address,
+    callData: call.data as Hex,
+    value: BigInt(call.value),
+  })),
+);
+
+const sentHash = await submitKernelUserOperationV07({
+  bundlerUrl,
+  chainRpcUrl: chainConfig.rpcUrl,
+  owner,
+  kernelAddress,
+  chainId,
+  kernelCallData,
+  request,
+  onStatus: setStatusSafe,
+});
+```
+
+### Withdraw Collateral
+
+```typescript
+const protocolTxs = await buildMorphoWithdrawTxsWithBackendLogic({
+  provider: ethersProvider,
+  market,
+  userAddress: kernelAddress,
+  amount: amountForProtocol,
+});
+
+// Encode and submit same as repay
+```
+
+<Info>
+Morpho operations may include multiple protocol calls (approve, repay, etc.) batched into a single UserOperation.
+</Info>
+
+## Transfer Operations
+
+Transfer tokens from the Kernel wallet to your connected EOA:
+
+```typescript
+const transferCallData = encodeErc20Transfer(owner, balance);
+
+const kernelCallData = await encodeKernelExecuteCalls([
+  {
+    target: asset.address,
+    callData: transferCallData,
+    value: 0n,
+  },
+]);
+
+const sentHash = await submitKernelUserOperationV07({
+  bundlerUrl,
+  chainRpcUrl: chain?.rpcUrl ?? "",
+  owner,
+  kernelAddress,
+  chainId,
+  kernelCallData,
+  request,
+  onStatus: setStatusSafe,
+});
+```
+
+## Gas Management
+
+### Gas Limits
+
+The app adds a **50% buffer** to bundler gas estimates to handle:
+
+- Interest accrual between estimation and execution
+- Gas price fluctuations
+- State changes (other users' transactions)
+
+```typescript
+const addBuffer = (value: bigint): bigint => (value * 150n) / 100n;
+
+const callGasLimit = addBuffer(rawCallGas) || FALLBACK_CALL_GAS_LIMIT;
+const verificationGasLimit = addBuffer(rawVerificationGas) || FALLBACK_VERIFICATION_GAS_LIMIT;
+const preVerificationGas = addBuffer(rawPreVerificationGas) || FALLBACK_PRE_VERIFICATION_GAS;
+```
+
+### Gas Price
+
+The app attempts to fetch gas price from the bundler:
+
+```typescript
+const bundlerGas = await getBundlerUserOpGasPrice(bundlerUrl);
+
+if (bundlerGas) {
+  maxFeePerGas = bundlerGas.maxFeePerGas;
+  maxPriorityFeePerGas = bundlerGas.maxPriorityFeePerGas;
+} else {
+  // Fallback to chain RPC
+  const gasPriceHex = await jsonRpcFetch<Hex>(chainRpcUrl, "eth_gasPrice");
+  maxFeePerGas = parseHexQuantity(gasPriceHex, "gasPrice");
+  // ...
+}
+
+// Add 10-20% buffer to gas price
+maxFeePerGas = (maxFeePerGas * 110n) / 100n;
+```
+
+### Nonce Management
+
+The app reads the nonce from the EntryPoint contract:
+
+```typescript
+function encodeKernelV07NonceKey(validatorAddress: Address, nonceSubKey: bigint = 0n): bigint {
+  const encoded = pad(
+    concatHex([
+      KERNEL_V07_NONCE_KEY_MODE_DEFAULT,
+      KERNEL_V07_NONCE_KEY_TYPE_SUDO,
+      validatorAddress,
+      toHex(nonceSubKey, { size: 2 }),
+    ]),
+    { size: 24 },
+  );
+  return BigInt(encoded);
+}
+
+const kernelNonceKey = encodeKernelV07NonceKey(ECDSA_VALIDATOR_ADDRESS);
+let nonce = await readKernelNonce({
+  chainRpcUrl,
+  request,
+  kernelAddress,
+  nonceKey: kernelNonceKey,
+});
+```
+
+<Warning>
+If the nonce changes between estimation and submission (e.g., another UserOp was submitted), the app automatically retries with the updated nonce.
+</Warning>
+
+## Error Handling
+
+### Common Errors
+
+**"Kernel wallet is not deployed on this chain"**
+- The Kernel address has no code on the selected chain
+- Verify you've selected the correct chain
+- Check the scan results to see which chains have deployments
+
+**"Invalid amount"**
+- The amount field is empty or contains non-numeric characters
+- Enter a valid decimal number or use the "max" checkbox
+
+**"User rejected"**
+- You rejected the signature request in your wallet
+- Click the execute button again and approve the signature
+
+**"AA25: Invalid account nonce"**
+- Another UserOperation was submitted while yours was pending
+- The app automatically retries with the updated nonce
+
+**"maxFeePerGas must be at least X"**
+- Gas price increased between estimation and submission
+- The app automatically retries with the required gas price
+
+## Best Practices
+
+### Repaying "All" Debt
+
+<Warning>
+When using "Repay all", keep extra USDC in the Kernel wallet. Debt increases continuously due to interest accrual, so the amount needed at execution time may be slightly higher than at estimation time.
+</Warning>
+
+Recommended buffer: +1% of debt amount
+
+### Withdrawing Collateral
+
+Before withdrawing collateral:
+
+1. Check your **health factor** after withdrawal
+2. Ensure health factor remains above 1.2 to avoid liquidation risk
+3. Consider repaying debt first to maintain a healthy position
+
+### Gas Requirements
+
+Estimated gas costs:
+
+- **Repay** (2 UserOps): ~400k gas
+- **Withdraw** (1 UserOp): ~200k gas
+- **Transfer** (1 UserOp): ~150k gas
+
+Multiply by the chain's gas price to estimate native token cost.
+
+## Monitoring UserOperations
+
+After submission, you'll see:
+
+```
+UserOp hash: 0x1234...5678
+```
+
+You can track the UserOperation:
+
+1. Copy the hash
+2. Visit a UserOp explorer (e.g., jiffyscan.xyz)
+3. Paste the hash to see status and transaction details
+
+## Next Steps
+
+After executing rescue operations:
+
+1. Click "Load positions" to refresh your position data
+2. Verify your health factor improved (if repaying)
+3. Check your EOA for withdrawn collateral or transferred tokens
+4. Monitor the transaction on a block explorer
+
+## Code Reference
+
+- Aave rescue actions: `app/wallet/[index]/_components/AaveRescueActions.tsx`
+- Morpho rescue actions: `app/wallet/[index]/_components/MorphoRescueActions.tsx`
+- Transfer action: `app/wallet/[index]/_components/TransferOutAction.tsx`
+- UserOp submission: `lib/accountAbstraction/submitUserOpV07.ts`
+- Kernel call encoding: `lib/protocols/kernel.ts`

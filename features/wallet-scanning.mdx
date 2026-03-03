@@ -1,0 +1,177 @@
+---
+title: Wallet Scanning
+description: Discover your ZeroDev Kernel smart accounts by scanning sequential indices
+---
+
+## Overview
+
+Borrow Recovery's wallet scanner helps you discover your per-loan ZeroDev Kernel smart accounts across multiple chains. Each loan is associated with a unique index, and the scanner derives the corresponding Kernel address and checks if it has been deployed.
+
+## How Wallet Scanning Works
+
+Kernel wallet addresses are deterministically derived from your EOA (Externally Owned Account) and an index using the CREATE2 opcode. This means you can predict the address of a Kernel wallet before it's deployed.
+
+### Address Derivation
+
+The derivation process uses the following components:
+
+```typescript
+// From: lib/kernel/deriveKernelAddress.ts
+export function deriveKernelAddressV3_3FromEOA(owner: Address, index: bigint): Address {
+  if (!KERNEL_V3_3_INIT_CODE_HASH) {
+    throw new Error("Missing Kernel v3.3 init code hash in ZeroDev constants");
+  }
+
+  const salt = kernelV33Salt(owner, index);
+  return getContractAddress({
+    bytecodeHash: KERNEL_V3_3_INIT_CODE_HASH,
+    opcode: "CREATE2",
+    from: KERNEL_V3_3_FACTORY_ADDRESS,
+    salt,
+  }) as Address;
+}
+```
+
+The salt is computed by hashing the initialization parameters and the index:
+
+```typescript
+function kernelV33Salt(owner: Address, index: bigint): Hex {
+  const initData = encodeFunctionData({
+    abi: KernelV3_1AccountAbi,
+    functionName: "initialize",
+    args: [
+      concatHex([VALIDATOR_TYPE.SECONDARY, ECDSA_VALIDATOR_ADDRESS]),
+      zeroAddress,
+      owner,
+      "0x",
+      [],
+    ],
+  });
+
+  const encodedIndex = toHex(index, { size: 32 });
+  return keccak256(concatHex([initData, encodedIndex]));
+}
+```
+
+<Note>
+The same owner address and index will always produce the same Kernel wallet address, making it possible to predict and scan for wallets without prior deployment.
+</Note>
+
+## Using the Scanner
+
+<Steps>
+  <Step title="Connect Your Wallet">
+    Click the "Connect Wallet" button in the top right corner. This is the EOA that was used to create your loan wallets.
+  </Step>
+  
+  <Step title="Configure Scan Settings">
+    Set your scan parameters:
+    - **Start index**: The first index to scan (typically 0)
+    - **End index**: The last index to scan (max range: 2,000 indices per scan)
+    - **Chains**: Select which chains to scan (Ethereum, Base, Arbitrum, BSC)
+  </Step>
+  
+  <Step title="Run the Scan">
+    Click "Start scan" to begin. The scanner will:
+    1. Derive Kernel addresses for each index in the range
+    2. Switch your wallet to each selected chain
+    3. Check if each address is deployed using `eth_getCode`
+    4. Display results in real-time
+  </Step>
+  
+  <Step title="Review Results">
+    The results table shows:
+    - Index number
+    - Derived Kernel address
+    - Deployment status for each chain
+    
+    Click any row to view detailed position information for that wallet.
+  </Step>
+</Steps>
+
+## Scan Process Details
+
+### Batched RPC Calls
+
+The scanner processes addresses in batches of 12 to optimize performance:
+
+```typescript
+// From: app/scan/page.tsx
+const batchSize = 12;
+for (let offset = 0; offset < baseRows.length; offset += batchSize) {
+  const batch = baseRows.slice(offset, offset + batchSize);
+  const codes = await Promise.all(
+    batch.map(async (r) => {
+      try {
+        return await request("eth_getCode", [
+          r.kernelAddress,
+          "latest",
+        ]) as string;
+      } catch {
+        return "0x";
+      }
+    }),
+  );
+  
+  for (let i = 0; i < batch.length; i++) {
+    const row = batch[i];
+    row.deployedByChainId[targetChainId] = codes[i] !== "0x";
+  }
+}
+```
+
+### Multi-Chain Detection
+
+The scanner automatically checks each selected chain by:
+
+1. Requesting a network switch via your wallet provider
+2. Confirming the switch was successful
+3. Querying contract code for each derived address
+4. Marking addresses as "deployed" if code is present (not `0x`)
+
+<Warning>
+You'll need to approve network switches in your wallet for each chain selected. The scan will pause if you reject a network switch request.
+</Warning>
+
+## Interpreting Results
+
+### Result Table Columns
+
+- **Index**: The sequential index used to derive the Kernel address
+- **Kernel address**: The derived smart account address (truncated for display)
+- **Chain columns**: One column per selected chain showing deployment status
+
+### Deployment Status
+
+- **deployed** badge: The Kernel wallet exists on this chain and may hold positions
+- **—**: The wallet address has not been deployed on this chain
+
+### Filtering Results
+
+Toggle **"Show only deployed wallets"** to hide addresses with no deployments across any selected chain. This is useful when scanning large ranges.
+
+## Scan Limits
+
+<Info>
+The maximum scan range is **2,000 indices** per scan. This prevents browser timeouts and excessive RPC requests.
+</Info>
+
+If you need to scan a larger range:
+
+1. Run multiple scans with different ranges (e.g., 0-1999, 2000-3999)
+2. Use the "Show only deployed wallets" filter to focus on active addresses
+3. Note which indices have deployments for further investigation
+
+## Next Steps
+
+Once you've identified deployed wallets:
+
+1. Click any table row to view that wallet's details
+2. [Load positions](/features/position-loading) to see balances and loan data
+3. [Execute rescue operations](/features/rescue-operations) to repay debt or withdraw collateral
+
+## Code Reference
+
+- Scan UI: `app/scan/page.tsx`
+- Address derivation: `lib/kernel/deriveKernelAddress.ts`
+- Kernel constants: `@zerodev/sdk/constants`

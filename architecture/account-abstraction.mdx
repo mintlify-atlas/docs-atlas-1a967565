@@ -1,0 +1,421 @@
+---
+title: ERC-4337 Account Abstraction
+description: How Borrow Recovery uses UserOperations for loan management
+---
+
+## What is ERC-4337?
+
+ERC-4337 is the account abstraction standard that enables smart contract wallets to:
+
+- Send transactions without being externally owned accounts (EOAs)
+- Pay gas in ERC-20 tokens (with paymasters)
+- Batch multiple operations atomically
+- Implement custom validation logic
+
+Borrow Recovery uses ERC-4337 to execute rescue operations (repay, withdraw, transfer) on Kernel loan wallets.
+
+## UserOperation Structure
+
+From `lib/accountAbstraction/userOpHashV07.ts`:
+
+```typescript
+export type UserOperationV07 = {
+  sender: Address;                            // Kernel wallet address
+  nonce: bigint;                              // Sequential nonce
+  callData: Hex;                              // Encoded Kernel execute() call
+  callGasLimit: bigint;                       // Gas for execution
+  verificationGasLimit: bigint;               // Gas for signature validation
+  preVerificationGas: bigint;                 // Gas for bundler overhead
+  maxFeePerGas: bigint;                       // Max gas price
+  maxPriorityFeePerGas: bigint;               // Miner tip
+  signature: Hex;                             // Owner's signature
+  
+  // Optional fields (not used in recovery app):
+  factory?: Address | undefined;              // Factory for deployment
+  factoryData?: Hex | undefined;              // Factory calldata
+  paymaster?: Address | undefined;            // Paymaster address
+  paymasterData?: Hex | undefined;            // Paymaster data
+  paymasterVerificationGasLimit?: bigint;     // Paymaster verification gas
+  paymasterPostOpGasLimit?: bigint;           // Paymaster post-op gas
+};
+```
+
+<Info>
+  The recovery app does not use paymasters - users pay gas directly from their Kernel wallet.
+</Info>
+
+## UserOperation Lifecycle
+
+The full lifecycle of a UserOperation is:
+
+```
+1. Construct        → Build UserOp with calldata
+2. Estimate Gas     → Get gas limits from bundler
+3. Get Gas Price    → Fetch current gas pricing
+4. Compute Hash     → Calculate UserOp hash
+5. Sign Hash        → Sign with wallet
+6. Submit           → Send to bundler
+7. Bundled          → Bundler includes in tx
+8. Executed         → EntryPoint processes on-chain
+```
+
+The entire flow is implemented in `lib/accountAbstraction/submitUserOpV07.ts`.
+
+## Gas Estimation
+
+Before submission, the app estimates gas requirements:
+
+```typescript
+type EstimateGasResult = {
+  callGasLimit: Hex;
+  verificationGasLimit: Hex;
+  preVerificationGas: Hex;
+};
+
+const estimate = await jsonRpcFetch<EstimateGasResult>(
+  bundlerUrl,
+  "eth_estimateUserOperationGas",
+  [toRpcOp(opBase), ENTRYPOINT_V07_ADDRESS]
+);
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:301`.
+
+### Gas Buffering
+
+The app adds a 50% buffer to estimates to handle:
+- Interest accrual between estimation and execution
+- Gas price volatility
+- State changes in DeFi protocols
+
+```typescript
+const addBuffer = (value: bigint): bigint => (value * 150n) / 100n;
+
+const callGasLimit = addBuffer(parseHexQuantity(estimate.callGasLimit));
+const verificationGasLimit = addBuffer(parseHexQuantity(estimate.verificationGasLimit));
+const preVerificationGas = addBuffer(parseHexQuantity(estimate.preVerificationGas));
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:332-353`.
+
+<Note>
+  If estimation fails or returns zero, the app falls back to conservative defaults:
+  - `FALLBACK_CALL_GAS_LIMIT = 80,000`
+  - `FALLBACK_VERIFICATION_GAS_LIMIT = 250,000`
+  - `FALLBACK_PRE_VERIFICATION_GAS = 40,000`
+</Note>
+
+## Gas Pricing
+
+The app uses a multi-tier approach to get gas prices:
+
+### 1. Bundler-Specific Methods
+
+First, try bundler-specific methods:
+
+```typescript
+async function getBundlerUserOpGasPrice(
+  bundlerUrl: string
+): Promise<UserOpGasPrice | null> {
+  try {
+    // Try ZeroDev method
+    const response = await jsonRpcFetch(
+      bundlerUrl,
+      "zd_getUserOperationGasPrice",
+      []
+    );
+    return parseBundlerUserOpGasPrice(response);
+  } catch {
+    try {
+      // Try Pimlico method
+      const response = await jsonRpcFetch(
+        bundlerUrl,
+        "pimlico_getUserOperationGasPrice",
+        []
+      );
+      return parseBundlerUserOpGasPrice(response);
+    } catch {
+      return null;
+    }
+  }
+}
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:90-102`.
+
+### 2. Chain RPC Fallback
+
+If bundler methods fail, fall back to chain RPC:
+
+```typescript
+const gasPriceHex = await jsonRpcFetch<Hex>(chainRpcUrl, "eth_gasPrice");
+maxFeePerGas = parseHexQuantity(gasPriceHex, "gasPrice");
+
+try {
+  const tipHex = await jsonRpcFetch<Hex>(chainRpcUrl, "eth_maxPriorityFeePerGas");
+  maxPriorityFeePerGas = parseHexQuantity(tipHex, "maxPriorityFeePerGas");
+} catch {
+  maxPriorityFeePerGas = maxFeePerGas;
+}
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:259-268`.
+
+### 3. Price Bumping
+
+Add 10-20% buffer to handle price increases:
+
+```typescript
+// From bundler: 10% bump
+return {
+  maxFeePerGas: (maxFeePerGas * 110n) / 100n,
+  maxPriorityFeePerGas: (maxPriorityFeePerGas * 110n) / 100n,
+};
+
+// From chain RPC: 20% bump
+maxFeePerGas = (maxFeePerGas * 120n) / 100n;
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:85-86` and `:270`.
+
+## Nonce Management
+
+Kernel v3 uses a special nonce encoding for EntryPoint v0.7:
+
+```typescript
+const KERNEL_V07_NONCE_KEY_MODE_DEFAULT: Hex = "0x00";
+const KERNEL_V07_NONCE_KEY_TYPE_SUDO: Hex = "0x00";
+const MAX_KERNEL_NONCE_SUBKEY = 0xffffn;
+
+function encodeKernelV07NonceKey(
+  validatorAddress: Address,
+  nonceSubKey: bigint = 0n
+): bigint {
+  const encoded = pad(
+    concatHex([
+      KERNEL_V07_NONCE_KEY_MODE_DEFAULT,
+      KERNEL_V07_NONCE_KEY_TYPE_SUDO,
+      validatorAddress,
+      toHex(nonceSubKey, { size: 2 }),
+    ]),
+    { size: 24 }
+  );
+  return BigInt(encoded);
+}
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:145-159`.
+
+### Reading Current Nonce
+
+The app reads nonces from EntryPoint:
+
+```typescript
+async function readKernelNonce(parameters: {
+  chainRpcUrl: string;
+  request: RpcRequest;
+  kernelAddress: Address;
+  nonceKey: bigint;
+}): Promise<bigint> {
+  const { chainRpcUrl, request, kernelAddress, nonceKey } = parameters;
+  const data = encodeEntryPointGetNonce({ sender: kernelAddress, key: nonceKey });
+  
+  // Try both "latest" and "pending" blocks
+  const targets = ["latest", "pending"] as const;
+  const observed: bigint[] = [];
+  
+  for (const blockTag of targets) {
+    try {
+      const res = await jsonRpcFetch<Hex>(chainRpcUrl, "eth_call", [
+        { to: ENTRYPOINT_V07_ADDRESS, data },
+        blockTag,
+      ]);
+      observed.push(decodeEntryPointGetNonce(res));
+    } catch {
+      // Continue to next provider
+    }
+  }
+  
+  // Return highest observed nonce
+  return observed.reduce((max, value) => (value > max ? value : max), observed[0]);
+}
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:161-193`.
+
+<Info>
+  The app checks both "latest" and "pending" to handle race conditions where a UserOp is submitted but not yet mined.
+</Info>
+
+## UserOperation Hash
+
+Before signing, the app computes the UserOp hash:
+
+```typescript
+import { getUserOperationHash } from "viem/account-abstraction";
+
+export function getUserOperationHashV07(parameters: {
+  userOperation: UserOperationV07;
+  entryPointAddress: Address;
+  chainId: number;
+}): Hex {
+  const { userOperation, entryPointAddress, chainId } = parameters;
+  return getUserOperationHash({
+    chainId,
+    entryPointAddress,
+    entryPointVersion: "0.7",
+    userOperation,
+  });
+}
+```
+
+From `lib/accountAbstraction/userOpHashV07.ts:23-35`.
+
+The hash includes:
+- All UserOp fields (sender, nonce, callData, gas limits, etc.)
+- EntryPoint address
+- Chain ID
+
+This prevents replay attacks across chains and EntryPoint versions.
+
+## Signing UserOperations
+
+The app tries multiple signature methods for wallet compatibility:
+
+```typescript
+async function signUserOperationHash(parameters: {
+  request: RpcRequest;
+  owner: Address;
+  userOpHash: Hex;
+}): Promise<Hex> {
+  const { request, owner, userOpHash } = parameters;
+  
+  const signingAttempts = [
+    { method: "personal_sign", params: [userOpHash, owner] },
+    { method: "personal_sign", params: [owner, userOpHash] }, // Reversed params
+    { method: "eth_sign", params: [owner, userOpHash] },
+  ];
+  
+  for (const attempt of signingAttempts) {
+    try {
+      return await request(attempt.method, attempt.params);
+    } catch (error) {
+      if (isUserRejectedError(error)) throw error;
+      if (!isSignatureMethodCompatibilityError(error)) throw error;
+      // Continue to next method
+    }
+  }
+  
+  throw new Error("Failed to sign UserOperation hash.");
+}
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:195-220`.
+
+<Note>
+  Different wallets implement `personal_sign` with different parameter orders, so the app tries both.
+</Note>
+
+## Submission and Retry Logic
+
+The app includes sophisticated retry logic:
+
+### Nonce Retry
+
+If submission fails with `AA25` (invalid nonce), refresh and retry:
+
+```typescript
+if (isInvalidAccountNonceError(sendError) && !nonceRetryUsed) {
+  nonceRetryUsed = true;
+  onStatus?.("Nonce changed before submission. Refreshing and retrying…");
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  nonce = await readKernelNonce({ /* ... */ });
+  // Re-estimate and retry
+}
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:409-423`.
+
+### Gas Price Retry
+
+If bundler requires higher gas price, bump and retry:
+
+```typescript
+const minRequiredMaxFeePerGas = extractMinRequiredMaxFeePerGas(sendError);
+if (minRequiredMaxFeePerGas !== null && !gasRetryUsed) {
+  const minBumpedFee = (minRequiredMaxFeePerGas * 110n) / 100n;
+  const currentBumpedFee = (opForSend.maxFeePerGas * 110n) / 100n;
+  const bumpedMaxFeePerGas = minBumpedFee > currentBumpedFee 
+    ? minBumpedFee 
+    : currentBumpedFee;
+  
+  opForSend = {
+    ...opForSend,
+    maxFeePerGas: bumpedMaxFeePerGas,
+    maxPriorityFeePerGas: /* adjusted */,
+  };
+  gasRetryUsed = true;
+  continue; // Retry
+}
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:391-407`.
+
+## EntryPoint v0.7
+
+Borrow Recovery uses **EntryPoint v0.7**, the latest ERC-4337 version:
+
+```typescript
+import { ENTRYPOINT_V07_ADDRESS } from "@/lib/protocols/entryPoint";
+
+// All UserOps are sent to this address
+const entryPointAddress = ENTRYPOINT_V07_ADDRESS;
+```
+
+EntryPoint v0.7 improvements:
+- Better gas efficiency
+- Enhanced validation rules
+- Native paymaster support
+
+## Bundler Integration
+
+The app supports ZeroDev bundlers via configuration:
+
+1. **Project ID format**: `abc123...` (app constructs URL)
+2. **Full URL format**: `https://rpc.zerodev.app/api/v3/{projectId}/chain/{chainId}`
+
+From the user's perspective:
+
+```typescript
+// User enters:
+"abc123def456"
+
+// App constructs:
+const bundlerUrl = `https://rpc.zerodev.app/api/v3/${projectId}/chain/${chainId}`;
+```
+
+The bundler handles:
+- Gas estimation
+- UserOp validation
+- Bundling multiple UserOps
+- Submission to mempool
+
+## Benefits for Recovery
+
+Using ERC-4337 provides:
+
+1. **Atomic batching**: Approve + repay in one UserOp
+2. **No gas holding**: Wallet can execute with minimal ETH
+3. **Standard interface**: Works with any bundler
+4. **Enhanced validation**: Kernel can enforce additional rules
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Kernel Accounts" icon="key" href="/architecture/kernel-accounts">
+    Learn about the Kernel smart accounts
+  </Card>
+  <Card title="Protocol Integration" icon="link" href="/architecture/protocol-integration">
+    See how UserOps interact with protocols
+  </Card>
+</CardGroup>

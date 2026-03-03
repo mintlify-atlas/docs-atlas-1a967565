@@ -1,80 +1,208 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get started with Borrow Recovery in minutes - connect your wallet, scan for loan wallets, and perform your first recovery action
 ---
 
-## Get started in three steps
+# Quickstart Guide
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide walks you through connecting your wallet, discovering your loan wallets, and executing your first recovery operation.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Before you begin, make sure you've reviewed the [Prerequisites](/prerequisites) page to ensure you have everything needed.
 </Note>
+
+## Overview
+
+The recovery workflow consists of four main steps:
+
+1. Connect your wallet
+2. Scan for deployed loan wallets
+3. Load position data
+4. Execute rescue actions
+
+## Step-by-Step Workflow
+
+<Steps>
+  <Step title="Export and Import Your Private Key">
+    <Warning>
+      You must export your private key from the Sats Terminal dashboard first.
+    </Warning>
+
+    1. Log in to the Sats Terminal dashboard
+    2. Export your private key from your account settings
+    3. Import that private key into MetaMask, Rabby, or another EIP-1193 compatible wallet
+    
+    <Note>
+      Do not connect a different wallet, or the derived wallet addresses will not match your loan positions.
+    </Note>
+
+    **Important**: Never paste private keys directly into the recovery UI. Private keys should only be imported in your wallet application.
+  </Step>
+
+  <Step title="Connect Your Wallet">
+    1. Open the Borrow Recovery app at `http://localhost:3000` (or your deployed URL)
+    2. Click the wallet button in the top-right corner
+    3. Select your wallet provider (MetaMask, Rabby, WalletConnect, etc.)
+    4. Approve the connection request in your wallet
+    5. Verify that your address appears in the connected status section
+  </Step>
+
+  <Step title="Scan for Deployed Wallets">
+    Navigate to the `/scan` page and configure your scan:
+
+    **Configure Scan Parameters**:
+    - **Start index**: The beginning of your index range (e.g., `0`)
+    - **End index**: The end of your index range (e.g., `100`)
+    - **Chain selection**: Check the chains you want to scan
+      - Ethereum
+      - Base
+      - Arbitrum
+      - BNB Chain
+
+    <Note>
+      Maximum scan size per run is 2,000 indices. Use "Show only deployed wallets" to filter out noise.
+    </Note>
+
+    **Run the Scan**:
+    1. Click **Start scan**
+    2. The app will request chain switches while scanning each chain
+    3. Approve the chain switch prompts in your wallet
+    4. Review the scan results table
+    5. Click any result row to open `/wallet/<index>` for that wallet
+
+    **Skip Scanning (Optional)**:
+    If you already know your wallet ID from the loan activation email, you can skip scanning and go directly to `/wallet/<wallet-id>` (e.g., `/wallet/12`).
+  </Step>
+
+  <Step title="Load Position Data">
+    After opening a wallet details page (`/wallet/<index>`):
+
+    1. The page displays the derived Kernel loan wallet address
+    2. Click **Copy address** to copy the smart wallet address
+    3. **Fund the wallet** with:
+       - Native gas token (ETH, BNB) - required for all rescue actions
+       - Repay token (USDC, USDT, etc.) - required for repay actions
+    4. Select the correct chain from the chain dropdown if needed
+    5. Click **Load positions** to fetch:
+       - Wallet token balances
+       - Aave V3 loan details (debt, collateral, health factor)
+       - Morpho Blue loan details
+  </Step>
+
+  <Step title="Configure ZeroDev Bundler">
+    Before executing rescue actions, you must configure the bundler:
+
+    **Get Your ZeroDev Project ID**:
+    1. Go to [https://dashboard.zerodev.app/projects/general](https://dashboard.zerodev.app/projects/general)
+    2. Sign in to your ZeroDev account
+    3. Open your project (or create one if none exists)
+    4. Copy the **Project ID** from the top-right of the project page
+
+    **Configure in Recovery UI**:
+    1. Locate the "ZeroDev Project ID or RPC URL" input field
+    2. Paste either:
+       - Your ZeroDev Project ID, or
+       - A full bundler URL (e.g., `https://rpc.zerodev.app/api/v3/<project-id>/chain/<chain-id>`)
+    3. Rescue action buttons will become enabled when the input is valid
+  </Step>
+
+  <Step title="Execute Your First Rescue Action">
+    Choose one of the available rescue operations:
+
+    ### Option A: Withdraw Collateral (Aave)
+    1. Scroll to the Aave section
+    2. Select action: **Withdraw collateral**
+    3. Toggle full amount or enter custom amount
+    4. Click **Execute Aave action via Kernel**
+    5. Approve the transaction in your wallet
+    6. Wait for the UserOp to complete
+
+    ### Option B: Repay Debt (Aave)
+    1. Ensure the loan wallet has sufficient repay tokens
+    2. Select action: **Repay debt**
+    3. Toggle full amount or enter custom amount
+    4. Click **Execute Aave action via Kernel**
+    5. Approve **both** transactions in your wallet (approve + repay)
+    
+    <Warning>
+      If using "Repay all", keep a little extra loan token (USDC/USDT) in the wallet because interest accrues in real-time and debt can increase slightly before execution.
+    </Warning>
+
+    ### Option C: Transfer Out Tokens
+    1. Locate the wallet balances section
+    2. Find the token card you want to transfer
+    3. Click **Transfer all to connected wallet**
+    4. Approve the transaction in your wallet
+  </Step>
+
+  <Step title="Verify Results">
+    After executing a rescue action:
+
+    1. Review the status text displayed in the UI
+    2. Copy the UserOp hash to track on a block explorer
+    3. Click **Load positions** again to verify:
+       - Updated token balances
+       - Changed debt amounts
+       - Updated collateral positions
+       - New health factor (if applicable)
+  </Step>
+</Steps>
+
+## Operational Checklist
+
+Before executing any rescue action, verify:
+
+- [ ] Connected wallet is on the intended chain
+- [ ] Loan wallet has enough native gas token
+- [ ] Repay token is funded to the loan wallet (for repay flows)
+- [ ] Bundler input is set correctly (ZeroDev Project ID)
+- [ ] Amount and action are correct (especially full-withdraw/full-repay toggles)
+
+## Common Workflows
+
+### Fully Close a Loan Position
+
+<Steps>
+  <Step title="Fund the wallet with repay tokens and gas" />
+  <Step title="Execute: Repay all debt (Aave or Morpho)" />
+  <Step title="Execute: Withdraw all collateral" />
+  <Step title="Execute: Transfer out all token balances" />
+</Steps>
+
+### Partially Reduce Risk
+
+<Steps>
+  <Step title="Fund the wallet with repay tokens and gas" />
+  <Step title="Execute: Repay partial debt to improve health factor" />
+  <Step title="Verify: Load positions to confirm new health factor" />
+</Steps>
+
+### Extract Collateral Only
+
+<Steps>
+  <Step title="Ensure loan is fully repaid or over-collateralized" />
+  <Step title="Execute: Withdraw collateral (full or partial)" />
+  <Step title="Execute: Transfer withdrawn tokens to your EOA" />
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Wallet Scanning Guide" icon="magnifying-glass" href="/features/wallet-scanning">
+    Learn advanced scanning techniques and troubleshooting
+  </Card>
+  <Card title="Rescue Operations" icon="life-ring" href="/features/rescue-operations">
+    Detailed guide for all Aave and Morpho rescue actions
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+See common issues and solutions:
+
+- **Action button disabled**: Missing or invalid bundler input, invalid amount, or an action is already submitting
+- **"No gas" warning**: Send native gas token to the loan wallet address
+- **"Switch your wallet to `<chain>`"**: Use chain selector and approve wallet switch prompt
+- **Scan is slow**: Reduce range size or number of selected chains
+
+For detailed troubleshooting, see the main documentation sections for [Wallet Scanning](/wallet-scanning) and [Rescue Operations](/rescue-operations).

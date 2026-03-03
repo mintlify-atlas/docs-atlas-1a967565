@@ -1,0 +1,147 @@
+---
+title: System Architecture Overview
+description: High-level architecture of Borrow Recovery's frontend-only design
+---
+
+## Architecture Philosophy
+
+Borrow Recovery is built as a **frontend-only application** with no backend infrastructure:
+
+- **No backend signer** - All signatures happen in your connected wallet
+- **No database** - All data is read directly from blockchain
+- **No paymaster** - Users pay their own gas fees
+- **No hosted service dependencies** - Works completely decentralized
+
+This design ensures the recovery UI remains functional even if the main service is unavailable.
+
+## High-Level Architecture
+
+The system consists of three core components:
+
+```
+┌─────────────────┐
+│  User's Wallet  │
+│    (EOA/EOA)    │
+└────────┬────────┘
+         │
+         │ 1. Derive address
+         ▼
+┌─────────────────────────────┐
+│  Kernel v3.3 Smart Account  │
+│  (Deterministic Address)    │
+└────────┬────────────────────┘
+         │
+         │ 2. Read positions
+         ▼
+┌────────────────────────────┐
+│   DeFi Protocols           │
+│   • Aave V3 Pools          │
+│   • Morpho Blue Markets    │
+└────────┬───────────────────┘
+         │
+         │ 3. Submit UserOp
+         ▼
+┌────────────────────────────┐
+│   ERC-4337 Infrastructure  │
+│   • EntryPoint v0.7        │
+│   • Bundler (ZeroDev)      │
+└────────────────────────────┘
+```
+
+## Key Components
+
+### 1. Wallet Derivation
+
+The app derives deterministic ZeroDev Kernel v3.3 smart account addresses from:
+- Your connected EOA address
+- A wallet index (0, 1, 2, ...)
+- Deterministic CREATE2 deployment
+
+This allows you to recover any loan wallet by knowing just the index.
+
+<Info>
+  The derivation logic is in `lib/kernel/deriveKernelAddress.ts` and uses ZeroDev SDK constants.
+</Info>
+
+### 2. Position Reading
+
+The app reads blockchain state directly using:
+- Public RPC endpoints (no API keys required)
+- Smart contract view functions
+- Multi-chain support (Ethereum, Base, Arbitrum, BNB)
+
+Protocol integrations:
+- **Aave V3**: Reads collateral, debt, and health factor from Pool contracts
+- **Morpho Blue**: Reads position shares and collateral from market contracts
+
+### 3. UserOperation Submission
+
+Rescue actions (repay, withdraw, transfer) are executed via ERC-4337:
+- Construct UserOperation with calldata for target protocol
+- Estimate gas using bundler RPC
+- Sign UserOp hash with connected wallet
+- Submit to bundler for execution
+
+All execution logic is in `lib/accountAbstraction/submitUserOpV07.ts`.
+
+## Project Structure
+
+```
+lib/
+├── kernel/
+│   └── deriveKernelAddress.ts    # Kernel address derivation
+├── accountAbstraction/
+│   ├── submitUserOpV07.ts        # UserOp construction & submission
+│   └── userOpHashV07.ts          # UserOp hash calculation
+├── protocols/
+│   ├── aave.ts                   # Aave V3 calldata encoding
+│   ├── morpho.ts                 # Morpho Blue calldata encoding
+│   ├── kernel.ts                 # Kernel execute calls
+│   ├── erc20.ts                  # ERC-20 token operations
+│   └── entryPoint.ts             # EntryPoint v0.7 interface
+├── chains.ts                     # Chain configurations
+└── assets.ts                     # Token configurations
+```
+
+## Multi-Chain Support
+
+The app supports loan recovery across:
+
+- **Ethereum** (Chain ID: 1)
+- **Base** (Chain ID: 8453)
+- **Arbitrum** (Chain ID: 42161)
+- **BNB Chain** (Chain ID: 56)
+
+All chain configurations include:
+- RPC endpoints
+- Aave V3 contract addresses
+- Morpho Blue contract addresses
+- Block explorer URLs
+
+See `lib/chains.ts` for full configuration details.
+
+## Security Model
+
+<Note>
+  The app never asks for or stores private keys. All signing happens in your connected wallet.
+</Note>
+
+Security principles:
+- **Non-custodial**: Users maintain full control of keys
+- **Transparent**: All transactions are shown before signing
+- **Deterministic**: Address derivation is reproducible
+- **Open source**: All code is auditable
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Kernel Accounts" icon="key" href="/architecture/kernel-accounts">
+    Learn about ZeroDev Kernel v3.3 smart accounts
+  </Card>
+  <Card title="Account Abstraction" icon="cube" href="/architecture/account-abstraction">
+    Understand ERC-4337 UserOperations
+  </Card>
+  <Card title="Protocol Integration" icon="link" href="/architecture/protocol-integration">
+    Explore Aave and Morpho integrations
+  </Card>
+</CardGroup>

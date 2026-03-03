@@ -1,0 +1,107 @@
+---
+title: Troubleshooting
+description: Common issues and solutions when using Borrow Recovery
+---
+
+This guide covers common issues you may encounter while using Borrow Recovery and how to resolve them.
+
+## Common Issues
+
+<Accordion title="Switch your wallet to <chain>">
+  **Problem:** You see a message prompting you to switch your wallet to a specific chain.
+
+  **Solution:**
+  - Use the chain selector dropdown in the UI
+  - Approve the wallet switch prompt that appears in your wallet extension
+  - Ensure you're on the correct chain before executing any actions
+</Accordion>
+
+<Accordion title="Action buttons are disabled">
+  **Problem:** Rescue action buttons (Repay, Withdraw, Transfer) are disabled and cannot be clicked.
+
+  **Solution:** Check for the following:
+  - **Missing or invalid bundler input:** Ensure you've entered a valid ZeroDev Project ID or bundler RPC URL
+  - **Invalid amount:** Verify the amount you've entered is valid and not zero
+  - **Action already in progress:** Wait for any currently submitting action to complete
+  - **Connected wallet:** Make sure your wallet is connected and on the correct chain
+</Accordion>
+
+<Accordion title="No gas warning">
+  **Problem:** You see a "No gas" warning when trying to execute an action.
+
+  **Solution:**
+  - Send native gas tokens to the loan wallet address
+  - The loan wallet address is displayed on the `/wallet/<index>` page
+  - Use the **Copy address** button to get the exact address
+  - Required gas tokens by chain:
+    - Ethereum: ETH
+    - Base: ETH
+    - Arbitrum: ETH
+    - BNB Chain: BNB
+</Accordion>
+
+<Accordion title="Morpho USD fields show —">
+  **Problem:** When viewing Morpho positions, the USD value fields display "—" instead of values.
+
+  **Solution:**
+  - Click the **Load positions** button again to retry fetching data
+  - Check your browser console for `Morpho summary fetch failed` errors to see exact failure details
+  - The app tries multiple fallback methods:
+    1. Public RPC read (backend-style)
+    2. Wallet provider read fallback
+    3. Raw onchain contract read fallback
+  - If the issue persists, try switching to a different RPC or refreshing the page
+</Accordion>
+
+<Accordion title="Wallet scanning is slow">
+  **Problem:** The wallet index scanning process is taking too long.
+
+  **Solution:**
+  - Reduce the index range size (remember: max 2,000 indices per scan)
+  - Reduce the number of selected chains to scan
+  - Use the **Show only deployed wallets** filter to reduce noise
+  - If you already know your wallet ID, skip scanning and navigate directly to `/wallet/<wallet-id>`
+</Accordion>
+
+<Accordion title="Repay fails with insufficient balance">
+  **Problem:** Repay action fails even though you have the repay token in your wallet.
+
+  **Solution:**
+  - When using **Repay all**, keep a little extra loan token (USDC/USDT) in the loan wallet
+  - Interest accrues in real time, so debt can increase slightly between when you load positions and when you execute
+  - Consider adding 0.5-1% extra to the loan wallet to account for accrued interest
+</Accordion>
+
+<Accordion title="Connected wallet doesn't match my loan">
+  **Problem:** The derived wallet addresses don't match your loan wallet.
+
+  **Solution:**
+  - You must use the exact same EOA (Externally Owned Account) that was used to create the loan
+  - Export your private key from the Sats Terminal dashboard
+  - Import that private key into MetaMask, Rabby, or another EIP-1193 compatible wallet
+  - Connect using that imported wallet
+  - Do not connect a different wallet, or the derived Kernel addresses will not match
+</Accordion>
+
+<Accordion title="Chain switching requests during scan">
+  **Problem:** The app repeatedly asks to switch chains during scanning.
+
+  **Solution:**
+  - This is expected behavior when scanning multiple chains
+  - The app must switch to each selected chain to check for deployed wallets
+  - Approve each chain switch request in your wallet
+  - If this is disruptive, consider scanning one chain at a time
+</Accordion>
+
+## Still Having Issues?
+
+If you're experiencing issues not covered here:
+
+1. Check the browser console for detailed error messages
+2. Verify all prerequisites are met (correct wallet, sufficient gas, valid bundler input)
+3. Try refreshing the page and reconnecting your wallet
+4. Ensure your wallet extension is up to date
+
+<Note>
+  Remember: This is a frontend-only recovery tool with no backend, database, or paymaster. All signatures happen in your connected wallet.
+</Note>

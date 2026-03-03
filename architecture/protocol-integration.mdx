@@ -1,0 +1,544 @@
+---
+title: DeFi Protocol Integration
+description: How Borrow Recovery integrates with Aave V3 and Morpho Blue
+---
+
+## Supported Protocols
+
+Borrow Recovery integrates with two major lending protocols:
+
+- **Aave V3**: Multi-chain lending pools
+- **Morpho Blue**: Next-generation lending primitive
+
+All protocol interactions happen through deterministic calldata encoding, submitted via ERC-4337 UserOperations.
+
+## Multi-Chain Support
+
+From `lib/chains.ts`, the app supports:
+
+```typescript
+export type SupportedChainId = 1 | 8453 | 42161 | 56;
+
+export const SUPPORTED_CHAINS: readonly ChainConfig[] = [
+  {
+    id: 1,
+    name: "Ethereum",
+    nativeSymbol: "ETH",
+    rpcUrl: "https://rpc.ankr.com/eth",
+    explorerBaseUrl: "https://etherscan.io",
+    aaveV3PoolAddress: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+    morphoBlueAddress: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+    // ... other addresses
+  },
+  // Base, Arbitrum, BNB configs...
+];
+```
+
+<Info>
+  All chains use public RPC endpoints - no API keys required for position reading.
+</Info>
+
+### Chain Configuration
+
+Each chain includes:
+
+- **RPC URL**: For reading positions and submitting calls
+- **Explorer**: For viewing transactions
+- **Aave V3 addresses**: Pool, Gateway, Data Providers
+- **Morpho Blue address**: Core lending contract
+
+```typescript
+export type ChainConfig = {
+  id: SupportedChainId;
+  name: string;
+  nativeSymbol: string;
+  rpcUrl: string;
+  explorerBaseUrl: string;
+  
+  // Aave V3 contracts
+  aaveV3PoolAddress: `0x${string}` | null;
+  aaveV3WethGatewayAddress: `0x${string}` | null;
+  aaveV3ProtocolDataProviderAddress: `0x${string}` | null;
+  aaveV3PoolAddressesProvider: `0x${string}` | null;
+  aaveV3UiPoolDataProviderAddress: `0x${string}` | null;
+  aaveV3UiIncentiveDataProviderAddress: `0x${string}` | null;
+  
+  // Morpho Blue
+  morphoBlueAddress: `0x${string}` | null;
+};
+```
+
+## Aave V3 Integration
+
+### Reading Positions
+
+From `lib/protocols/aave.ts`, the app reads user positions:
+
+```typescript
+const aavePoolAbi = parseAbi([
+  "function getUserAccountData(address user) view returns (uint256 totalCollateralBase, uint256 totalDebtBase, uint256 availableBorrowsBase, uint256 currentLiquidationThreshold, uint256 ltv, uint256 healthFactor)",
+]);
+
+export type AaveUserAccountData = {
+  totalCollateralBase: bigint;         // Total collateral in USD (8 decimals)
+  totalDebtBase: bigint;               // Total debt in USD (8 decimals)
+  availableBorrowsBase: bigint;        // Available to borrow
+  currentLiquidationThreshold: bigint; // Liquidation threshold
+  ltv: bigint;                         // Loan-to-value ratio
+  healthFactor: bigint;                // Position health (1e18 = 100%)
+};
+```
+
+The app encodes and decodes this data:
+
+```typescript
+export function encodeAaveGetUserAccountData(user: Address): Hex {
+  return encodeFunctionData({
+    abi: aavePoolAbi,
+    functionName: "getUserAccountData",
+    args: [user],
+  });
+}
+
+export function decodeAaveGetUserAccountData(result: Hex): AaveUserAccountData {
+  const [
+    totalCollateralBase,
+    totalDebtBase,
+    availableBorrowsBase,
+    currentLiquidationThreshold,
+    ltv,
+    healthFactor,
+  ] = decodeFunctionResult({
+    abi: aavePoolAbi,
+    functionName: "getUserAccountData",
+    data: result,
+  });
+  
+  return {
+    totalCollateralBase,
+    totalDebtBase,
+    availableBorrowsBase,
+    currentLiquidationThreshold,
+    ltv,
+    healthFactor,
+  };
+}
+```
+
+From `lib/protocols/aave.ts:80-103`.
+
+### Reserve Token Addresses
+
+To get aToken/debtToken addresses:
+
+```typescript
+const aavePoolAbi = parseAbi([
+  "function getReserveTokensAddresses(address asset) view returns (address aTokenAddress, address stableDebtTokenAddress, address variableDebtTokenAddress)",
+]);
+
+export function decodeAaveGetReserveTokensAddresses(result: Hex): {
+  aTokenAddress: Address;
+  stableDebtTokenAddress: Address;
+  variableDebtTokenAddress: Address;
+} {
+  const [aTokenAddress, stableDebtTokenAddress, variableDebtTokenAddress] = 
+    decodeFunctionResult({
+      abi: aavePoolAbi,
+      functionName: "getReserveTokensAddresses",
+      data: result,
+    });
+  return { aTokenAddress, stableDebtTokenAddress, variableDebtTokenAddress };
+}
+```
+
+From `lib/protocols/aave.ts:36-47`.
+
+### Rescue Operations
+
+#### Repay Debt
+
+```typescript
+export function encodeAaveRepay(params: {
+  asset: Address;              // Token to repay (e.g., USDC)
+  amount: bigint;              // Amount to repay (or MAX_UINT256 for all)
+  interestRateMode: bigint;    // 2 = variable rate
+  onBehalfOf: Address;         // Kernel wallet address
+}): Hex {
+  return encodeFunctionData({
+    abi: aavePoolAbi,
+    functionName: "repay",
+    args: [params.asset, params.amount, params.interestRateMode, params.onBehalfOf],
+  });
+}
+```
+
+From `lib/protocols/aave.ts:52-63`.
+
+<Note>
+  To repay all debt, use `MAX_UINT256` (2^256 - 1). Aave will calculate the exact amount needed.
+</Note>
+
+#### Withdraw Collateral
+
+```typescript
+export function encodeAaveWithdraw(params: {
+  asset: Address;     // Collateral token (e.g., WBTC)
+  amount: bigint;     // Amount to withdraw (or MAX_UINT256 for all)
+  to: Address;        // Recipient (usually connected wallet)
+}): Hex {
+  return encodeFunctionData({
+    abi: aavePoolAbi,
+    functionName: "withdraw",
+    args: [params.asset, params.amount, params.to],
+  });
+}
+```
+
+From `lib/protocols/aave.ts:66-76`.
+
+### Execution Flow
+
+For an Aave repay operation:
+
+1. **User clicks "Repay debt"**
+2. **App constructs calldata**:
+   ```typescript
+   const approveCall = encodeERC20Approve({
+     token: loanToken,
+     spender: aavePoolAddress,
+     amount: repayAmount,
+   });
+   
+   const repayCall = encodeAaveRepay({
+     asset: loanToken,
+     amount: repayAmount,
+     interestRateMode: 2n,
+     onBehalfOf: kernelAddress,
+   });
+   ```
+3. **Batch into Kernel execute**:
+   ```typescript
+   const kernelCallData = await encodeKernelExecuteCalls([
+     { target: loanToken, callData: approveCall },
+     { target: aavePoolAddress, callData: repayCall },
+   ]);
+   ```
+4. **Submit as UserOperation** (see [Account Abstraction](/architecture/account-abstraction))
+
+## Morpho Blue Integration
+
+### Market Configuration
+
+Morpho Blue uses isolated lending markets. From the README:
+
+```typescript
+// Currently supported market
+const MORPHO_MARKET_ID = 
+  "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836";
+```
+
+This market is available on all supported chains at the same address:
+
+```typescript
+morphoBlueAddress: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
+```
+
+### Reading Positions
+
+From `lib/protocols/morpho.ts`:
+
+```typescript
+const morphoBlueAbi = parseAbi([
+  "function position(bytes32 marketId, address user) view returns (uint256 supplyShares, uint256 borrowShares, uint256 collateral)",
+]);
+
+export type MorphoBluePosition = {
+  supplyShares: bigint;   // Supply shares in market
+  borrowShares: bigint;   // Borrow shares (debt)
+  collateral: bigint;     // Collateral deposited
+};
+```
+
+#### Encoding Position Query
+
+```typescript
+export function encodeMorphoBluePosition(
+  marketId: Hex,
+  user: Address
+): Hex {
+  return encodeFunctionData({
+    abi: morphoBlueAbi,
+    functionName: "position",
+    args: [marketId, user],
+  });
+}
+```
+
+From `lib/protocols/morpho.ts:14-20`.
+
+#### Decoding Position Data
+
+```typescript
+export function decodeMorphoBluePosition(result: Hex): MorphoBluePosition {
+  const [supplyShares, borrowShares, collateral] = decodeFunctionResult({
+    abi: morphoBlueAbi,
+    functionName: "position",
+    data: result,
+  });
+  
+  return { supplyShares, borrowShares, collateral };
+}
+```
+
+From `lib/protocols/morpho.ts:22-30`.
+
+<Info>
+  Morpho uses shares instead of amounts. The app converts shares to tokens using market state (total supply, total borrow).
+</Info>
+
+### Rescue Operations
+
+Morpho Blue rescue operations work similarly to Aave:
+
+- **Repay**: Transfer loan token → call `repay()` on Morpho
+- **Withdraw**: Call `withdrawCollateral()` → receive collateral
+
+The calldata encoding follows the same pattern:
+
+1. Encode Morpho function call
+2. Batch with approvals if needed
+3. Wrap in Kernel execute
+4. Submit as UserOperation
+
+## ERC-20 Token Operations
+
+From `lib/protocols/erc20.ts`, the app supports standard token operations:
+
+```typescript
+const erc20Abi = parseAbi([
+  "function balanceOf(address account) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function transfer(address to, uint256 amount) returns (bool)",
+]);
+
+export function encodeERC20Approve(params: {
+  spender: Address;
+  amount: bigint;
+}): Hex {
+  return encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [params.spender, params.amount],
+  });
+}
+
+export function encodeERC20Transfer(params: {
+  to: Address;
+  amount: bigint;
+}): Hex {
+  return encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "transfer",
+    args: [params.to, params.amount],
+  });
+}
+```
+
+### Token Transfers
+
+The "Transfer all to connected wallet" feature:
+
+1. **Read balance** from Kernel wallet
+2. **Encode transfer**:
+   ```typescript
+   const transferCall = encodeERC20Transfer({
+     to: connectedWalletAddress,
+     amount: balance,
+   });
+   ```
+3. **Wrap in Kernel execute**:
+   ```typescript
+   const kernelCallData = await encodeKernelExecuteCalls([
+     { target: tokenAddress, callData: transferCall },
+   ]);
+   ```
+4. **Submit UserOperation**
+
+## Kernel Execution Wrapper
+
+All protocol calls are wrapped in Kernel's `execute()` function.
+
+From `lib/protocols/kernel.ts`:
+
+```typescript
+import { encodeCallDataEpV07 } from "@zerodev/sdk";
+
+type KernelCall = {
+  target: Address;                  // Contract to call
+  value?: bigint | undefined;       // ETH value (optional)
+  callData?: Hex | undefined;       // Encoded function call
+};
+
+export async function encodeKernelExecuteCalls(
+  calls: readonly KernelCall[]
+): Promise<Hex> {
+  if (calls.length === 0) throw new Error("No calls to encode.");
+  
+  return encodeCallDataEpV07(
+    calls.map((call) => ({
+      to: call.target,
+      value: call.value ?? 0n,
+      data: call.callData ?? "0x",
+    }))
+  );
+}
+```
+
+From `lib/protocols/kernel.ts:15-24`.
+
+This allows batching:
+- Multiple protocol operations
+- Token approvals + actions
+- Cross-protocol operations
+
+## Example: Full Aave Repay Flow
+
+Here's the complete flow for repaying Aave debt:
+
+### 1. User Input
+
+```typescript
+const userInput = {
+  loanToken: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
+  repayAmount: 1000_000000n, // 1000 USDC (6 decimals)
+  kernelAddress: "0x...",
+  aavePoolAddress: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+};
+```
+
+### 2. Encode Calls
+
+```typescript
+import { encodeERC20Approve, encodeAaveRepay, encodeKernelExecuteCalls } from "@/lib/protocols";
+
+const approveCall = encodeERC20Approve({
+  spender: userInput.aavePoolAddress,
+  amount: userInput.repayAmount,
+});
+
+const repayCall = encodeAaveRepay({
+  asset: userInput.loanToken,
+  amount: userInput.repayAmount,
+  interestRateMode: 2n, // Variable rate
+  onBehalfOf: userInput.kernelAddress,
+});
+
+const kernelCallData = await encodeKernelExecuteCalls([
+  { target: userInput.loanToken, callData: approveCall },
+  { target: userInput.aavePoolAddress, callData: repayCall },
+]);
+```
+
+### 3. Submit UserOperation
+
+```typescript
+import { submitKernelUserOperationV07 } from "@/lib/accountAbstraction";
+
+const userOpHash = await submitKernelUserOperationV07({
+  bundlerUrl: "https://rpc.zerodev.app/api/v3/{projectId}/chain/1",
+  chainRpcUrl: "https://rpc.ankr.com/eth",
+  owner: connectedWalletAddress,
+  kernelAddress: userInput.kernelAddress,
+  chainId: 1,
+  kernelCallData,
+  request: walletRequest, // EIP-1193 request function
+});
+
+console.log("UserOp submitted:", userOpHash);
+```
+
+### 4. Result
+
+The bundler executes:
+1. Approve USDC to Aave Pool
+2. Repay 1000 USDC debt
+
+Both operations succeed or revert atomically.
+
+## Data Providers
+
+Beyond core protocol contracts, the app uses data provider contracts:
+
+### Aave UI Providers
+
+```typescript
+aaveV3UiPoolDataProviderAddress: "0x...",      // Pool reserves data
+aaveV3UiIncentiveDataProviderAddress: "0x...", // Rewards data
+```
+
+These aggregate data for efficient UI rendering.
+
+### Protocol Data Provider
+
+```typescript
+aaveV3ProtocolDataProviderAddress: "0x...",
+```
+
+Provides detailed reserve configuration and user reserve data.
+
+## Error Handling
+
+Protocol interactions may fail due to:
+
+- **Insufficient balance**: Not enough tokens to repay
+- **Insufficient collateral**: Withdraw would trigger liquidation
+- **Interest accrual**: Debt increased between estimation and execution
+
+The app handles these with:
+- Gas buffering (50% extra)
+- Gas price bumping (10-20% extra)
+- Clear error messages to user
+
+From `lib/accountAbstraction/submitUserOpV07.ts`.
+
+## Multi-Chain Considerations
+
+<Note>
+  Same protocol (Aave V3 or Morpho Blue) may have different addresses on different chains.
+</Note>
+
+The app uses chain-specific configurations:
+
+```typescript
+import { getChainConfig } from "@/lib/chains";
+
+const chainConfig = getChainConfig(chainId);
+if (!chainConfig) throw new Error("Unsupported chain");
+
+const aavePoolAddress = chainConfig.aaveV3PoolAddress;
+const morphoAddress = chainConfig.morphoBlueAddress;
+```
+
+From `lib/chains.ts:93-96`.
+
+## Benefits of This Architecture
+
+1. **No backend dependencies**: All encoding happens client-side
+2. **Transparent**: Users see exact calldata before signing
+3. **Atomic**: Multiple operations succeed or fail together
+4. **Extensible**: Easy to add new protocols or chains
+5. **Standard**: Uses official protocol ABIs and addresses
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Kernel Accounts" icon="key" href="/architecture/kernel-accounts">
+    Learn about Kernel smart account structure
+  </Card>
+  <Card title="Account Abstraction" icon="cube" href="/architecture/account-abstraction">
+    Understand how UserOps execute protocol calls
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Start recovering your positions
+  </Card>
+</CardGroup>

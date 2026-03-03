@@ -1,0 +1,203 @@
+---
+title: "Wallet Recovery Workflow"
+description: "Complete guide to recovering your loan wallet funds using Borrow Recovery"
+---
+
+This guide walks you through the complete process of recovering funds from your ZeroDev Kernel loan wallet, from connecting your wallet to executing rescue operations.
+
+## Before You Begin
+
+<Warning>
+  **Critical Safety Notes**
+  - Never paste or type private keys into the recovery app
+  - Always validate addresses, chain, and amounts before signing transactions
+  - You are fully responsible for transaction execution and operational safety
+</Warning>
+
+<Note>
+  This app is frontend-only with no backend signer, database, or paymaster abstraction. All signatures happen in your connected wallet.
+</Note>
+
+## Recovery Workflow
+
+<Steps>
+  <Step title="Export and Import Your Private Key">
+    Before you can use the recovery app, you need to set up your wallet:
+
+    1. Export your private key from the Sats Terminal dashboard
+    2. Import that private key into MetaMask, Rabby, or another EIP-1193 compatible wallet
+    3. **Important**: Never connect a different wallet, or the derived Kernel addresses will not match your loan
+
+    <Warning>
+      Never paste private keys directly into the recovery UI. Private keys should only be imported in your wallet application.
+    </Warning>
+  </Step>
+
+  <Step title="Connect Your Wallet">
+    1. Open the Borrow Recovery app
+    2. Click the wallet button in the top-right corner
+    3. Connect the wallet that contains your imported private key
+    4. Ensure you're connecting the same EOA that was used for your loan
+  </Step>
+
+  <Step title="Discover Your Wallet Index">
+    Navigate to the `/scan` page to find your loan wallet:
+
+    **Set scan parameters**:
+    - Enter a **Start index** (e.g., 0)
+    - Enter an **End index** (e.g., 100)
+    - Select chain checkboxes for chains you want to scan
+    - Maximum scan size per run: 2,000 indices
+
+    **Run the scan**:
+    - Click **Start scan**
+    - The app will request chain switches while scanning each chain
+    - Use **Show only deployed wallets** to filter results
+
+    **View results**:
+    - Click any result row to open `/wallet/<index>`
+
+    <Tip>
+      If you already know your wallet ID (index) from your loan activation email, you can skip scanning and go directly to `/wallet/<wallet-id>`. For example: `/wallet/12`
+    </Tip>
+  </Step>
+
+  <Step title="Open Wallet Details">
+    On the `/wallet/<index>` page, you'll see:
+
+    - The derived Kernel loan wallet address
+    - A **Copy address** button
+    - Chain selector dropdown
+    - **Load positions** button
+
+    **Fund your wallet**:
+    
+    Before executing any rescue actions, you must fund the smart wallet with:
+    - **Native gas token** (required for all rescue actions)
+    - **Repay token** (USDC/USDT) if you plan to repay debt
+
+    Use the **Copy address** button and send funds from your main wallet or exchange.
+  </Step>
+
+  <Step title="Load Positions">
+    1. Select the correct chain from the dropdown
+    2. Click **Load positions**
+    
+    This fetches:
+    - Wallet token balances
+    - Aave V3 loan details (debt, collateral, health factor)
+    - Morpho Blue loan details (if applicable)
+
+    <Note>
+      If Morpho USD fields show `—`, click **Load positions** again or check the browser console for error details.
+    </Note>
+  </Step>
+
+  <Step title="Configure Bundler">
+    To execute rescue operations, you need a valid ZeroDev bundler configuration.
+
+    **Get your ZeroDev Project ID**:
+    1. Open [https://dashboard.zerodev.app/projects/general](https://dashboard.zerodev.app/projects/general)
+    2. Sign in to your account
+    3. Open your project (or create one if none exists)
+    4. Copy the **Project ID** from the top-right corner of the project page
+
+    **Enter bundler configuration**:
+    
+    In the **ZeroDev Project ID or RPC URL** field, paste either:
+    - Your ZeroDev Project ID, or
+    - A full bundler URL: `https://rpc.zerodev.app/api/v3/<project-id>/chain/<chain-id>`
+
+    <Warning>
+      Rescue action buttons remain disabled until this input is valid.
+    </Warning>
+  </Step>
+
+  <Step title="Execute Rescue Actions">
+    Now you can perform rescue operations on your loan:
+
+    **For Aave positions**:
+    - Choose **Withdraw collateral** or **Repay debt**
+    - Toggle **Withdraw all** / **Repay all** or enter a custom amount
+    - Click **Execute Aave action via Kernel**
+
+    **For Morpho positions**:
+    - Choose **Withdraw collateral** or **Repay debt**
+    - Toggle **Withdraw all collateral** / **Repay all debt** or enter a custom amount
+    - Click **Execute Morpho action via Kernel**
+
+    **Transfer collateral balance**:
+    - In the wallet balances section, click **Transfer all to connected wallet** for any token
+
+    <Tip>
+      When using **Repay all**, keep a little extra loan token (USDC/USDT) in the wallet. Interest accrues in real time, so debt can increase slightly before execution.
+    </Tip>
+  </Step>
+
+  <Step title="Confirm Results">
+    After each action:
+    - The app displays status text and a UserOp hash
+    - Wait for the transaction to be mined
+    - Click **Load positions** again to verify updated balances and debt/collateral changes
+
+    <Note>
+      You can verify the UserOp hash on a block explorer that supports ERC-4337 UserOperations.
+    </Note>
+  </Step>
+</Steps>
+
+## Operational Checklist
+
+Before executing any rescue action, verify:
+
+- [ ] Connected wallet is on the intended chain
+- [ ] Loan wallet has enough native gas token
+- [ ] Repay token is funded to the loan wallet (for repay flows)
+- [ ] Bundler input is set correctly
+- [ ] Amount and action type are correct
+- [ ] Full-withdraw/full-repay toggles are set as intended
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="'Switch your wallet to <chain>' error">
+    Use the chain selector dropdown and approve the wallet switch prompt in your wallet extension.
+  </Accordion>
+
+  <Accordion title="Action button is disabled">
+    Check for:
+    - Missing or invalid bundler input
+    - Invalid amount entered
+    - An action is already submitting
+  </Accordion>
+
+  <Accordion title="'No gas' warning">
+    Send native gas token (ETH, BNB, etc.) to the loan wallet address shown on the page.
+  </Accordion>
+
+  <Accordion title="Morpho USD fields show '—'">
+    1. Click **Load positions** again
+    2. Check browser console for `Morpho summary fetch failed` error messages
+    3. The app tries multiple fallback methods for reading Morpho data
+  </Accordion>
+
+  <Accordion title="Scan is very slow">
+    Reduce the scan range size and/or the number of selected chains. Maximum recommended: 500 indices at a time.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Aave Operations" icon="coins" href="/guides/aave-operations">
+    Learn about Aave V3 rescue actions and health factors
+  </Card>
+
+  <Card title="Morpho Operations" icon="vault" href="/guides/morpho-operations">
+    Understand Morpho Blue markets and rescue flows
+  </Card>
+
+  <Card title="Bundler Configuration" icon="server" href="/guides/bundler-configuration">
+    Deep dive into bundler setup and gas estimation
+  </Card>
+</CardGroup>

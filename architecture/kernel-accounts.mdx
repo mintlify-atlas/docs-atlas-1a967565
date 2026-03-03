@@ -1,0 +1,227 @@
+---
+title: ZeroDev Kernel Accounts
+description: How Borrow Recovery uses Kernel v3.3 smart accounts for loan wallets
+---
+
+## What are Kernel Smart Accounts?
+
+Borrow Recovery uses **ZeroDev Kernel v3.3** smart accounts for all loan wallets. These are ERC-4337 compatible smart contract wallets that:
+
+- Follow the account abstraction standard
+- Support modular validation logic
+- Enable gasless transactions (with paymasters)
+- Provide enhanced security features
+
+In this app, Kernel accounts serve as isolated loan wallets that hold collateral and interact with DeFi protocols.
+
+## Kernel v3.3 Architecture
+
+Each Kernel account consists of:
+
+1. **Account Implementation**: Core wallet logic (proxy pattern)
+2. **Validator Module**: ECDSA signature validation
+3. **EntryPoint**: ERC-4337 EntryPoint v0.7 contract
+
+### Key Addresses
+
+From `lib/kernel/deriveKernelAddress.ts`:
+
+```typescript
+import { KERNEL_V3_3, KernelVersionToAddressesMap } from "@zerodev/sdk/constants";
+
+const kernelV33Addresses = KernelVersionToAddressesMap[KERNEL_V3_3];
+
+export const KERNEL_V3_3_FACTORY_ADDRESS = kernelV33Addresses.factoryAddress;
+export const KERNEL_V3_3_IMPLEMENTATION_ADDRESS = kernelV33Addresses.accountImplementationAddress;
+export const KERNEL_V3_3_INIT_CODE_HASH = kernelV33Addresses.initCodeHash;
+```
+
+### ECDSA Validator
+
+The app uses the standard ECDSA validator for signature verification:
+
+```typescript
+import { getValidatorAddress } from "@zerodev/ecdsa-validator";
+import { getEntryPoint } from "@zerodev/sdk/constants";
+
+const ENTRYPOINT_V07 = getEntryPoint("0.7");
+
+export const ECDSA_VALIDATOR_ADDRESS = getValidatorAddress(
+  ENTRYPOINT_V07,
+  KERNEL_V3_3,
+);
+```
+
+This validator allows the loan wallet to accept signatures from the owner EOA.
+
+## Deterministic Address Derivation
+
+Kernel addresses are derived deterministically using **CREATE2**, which means:
+- The same owner + index always produces the same address
+- Addresses can be computed before deployment
+- No need to store or sync address databases
+
+### Derivation Process
+
+The derivation happens in three steps:
+
+#### 1. Create Initialization Data
+
+```typescript
+import { encodeFunctionData, concatHex, zeroAddress } from "viem";
+import { KernelV3_1AccountAbi, VALIDATOR_TYPE } from "@zerodev/sdk";
+
+function kernelV33Salt(owner: Address, index: bigint): Hex {
+  const initData = encodeFunctionData({
+    abi: KernelV3_1AccountAbi,
+    functionName: "initialize",
+    args: [
+      concatHex([VALIDATOR_TYPE.SECONDARY, ECDSA_VALIDATOR_ADDRESS]),
+      zeroAddress,
+      owner,
+      "0x",
+      [],
+    ],
+  });
+  // ... continues below
+}
+```
+
+This encodes the `initialize()` call that will be executed when the Kernel proxy is deployed.
+
+<Info>
+  The `owner` parameter is your connected wallet's address (EOA).
+</Info>
+
+#### 2. Compute Salt
+
+The salt combines initialization data with the wallet index:
+
+```typescript
+import { keccak256, toHex } from "viem";
+
+function kernelV33Salt(owner: Address, index: bigint): Hex {
+  // ... initData from above
+  
+  const encodedIndex = toHex(index, { size: 32 });
+  return keccak256(concatHex([initData, encodedIndex]));
+}
+```
+
+The `index` is what makes each loan wallet unique (0, 1, 2, ...).
+
+#### 3. Apply CREATE2
+
+Finally, compute the deterministic address:
+
+```typescript
+import { getContractAddress } from "viem";
+
+export function deriveKernelAddressV3_3FromEOA(
+  owner: Address,
+  index: bigint
+): Address {
+  const salt = kernelV33Salt(owner, index);
+  
+  return getContractAddress({
+    bytecodeHash: KERNEL_V3_3_INIT_CODE_HASH,
+    opcode: "CREATE2",
+    from: KERNEL_V3_3_FACTORY_ADDRESS,
+    salt,
+  });
+}
+```
+
+<Note>
+  This function is the core of wallet recovery - given an EOA and index, it always returns the same Kernel address.
+</Note>
+
+## Wallet Scanning
+
+The `/scan` page uses this derivation to search for deployed wallets:
+
+1. User specifies a range (e.g., index 0-100)
+2. App derives addresses for each index
+3. Check each address for deployed bytecode (`eth_getCode`)
+4. Display deployed wallets with their positions
+
+### Example Derivation
+
+For owner `0x742d35Cc6634C0532925a3b844Bc454e4438f44e` and index `42`:
+
+```typescript
+const kernelAddress = deriveKernelAddressV3_3FromEOA(
+  "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+  42n
+);
+// Returns: 0x... (deterministic address)
+```
+
+## Kernel Execution Model
+
+Kernel accounts execute calls via the `execute()` function:
+
+```solidity
+function execute(
+  bytes32 execMode,
+  bytes calldata executionCalldata
+) external payable
+```
+
+From `lib/protocols/kernel.ts`:
+
+```typescript
+import { encodeCallDataEpV07 } from "@zerodev/sdk";
+
+export async function encodeKernelExecuteCalls(
+  calls: readonly KernelCall[]
+): Promise<Hex> {
+  return encodeCallDataEpV07(
+    calls.map((call) => ({
+      to: call.target,
+      value: call.value ?? 0n,
+      data: call.callData ?? "0x",
+    }))
+  );
+}
+```
+
+This allows batching multiple operations (e.g., approve + repay) into a single UserOperation.
+
+## Deployment Status
+
+Kernel accounts may or may not be deployed:
+
+- **Undeployed**: Address is computed but no bytecode exists
+- **Deployed**: Factory has created the proxy at the address
+
+The app checks deployment status before submitting UserOperations:
+
+```typescript
+const kernelCode = await request("eth_getCode", [kernelAddress, "latest"]);
+if (kernelCode === "0x") {
+  throw new Error("Kernel wallet is not deployed on this chain.");
+}
+```
+
+From `lib/accountAbstraction/submitUserOpV07.ts:236`.
+
+## Benefits for Recovery
+
+Using Kernel accounts for loans provides:
+
+1. **Deterministic recovery**: No database needed to find wallets
+2. **Isolation**: Each loan is in its own smart account
+3. **Flexibility**: Can add custom logic (e.g., session keys)
+4. **Standard compliance**: Works with any ERC-4337 bundler
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Account Abstraction" icon="cube" href="/architecture/account-abstraction">
+    Learn how UserOperations enable execution
+  </Card>
+  <Card title="Protocol Integration" icon="link" href="/architecture/protocol-integration">
+    See how Kernel wallets interact with Aave and Morpho
+  </Card>
+</CardGroup>

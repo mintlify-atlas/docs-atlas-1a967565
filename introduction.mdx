@@ -1,0 +1,109 @@
+---
+title: Introduction
+description: Recovery UI for discovering and operating EVM ZeroDev Kernel loan wallets across Aave V3 and Morpho Blue protocols
+---
+
+# Borrow Recovery
+
+Borrow Recovery is a frontend-only recovery UI for discovering and operating EVM ZeroDev Kernel loan wallets if the main service ceases to exist or becomes unavailable.
+
+<Note>
+  This app is frontend-only with no backend signer, no database, and no paymaster abstraction. All signatures happen in your connected wallet.
+</Note>
+
+## What is Borrow Recovery?
+
+Borrow Recovery provides a self-service control panel for managing loan positions created through ZeroDev Kernel v3.3 smart accounts. If the hosted service becomes unavailable, you can use this recovery UI to:
+
+- Discover your deployed loan wallets by scanning address ranges
+- View loan positions across Aave V3 and Morpho Blue protocols
+- Execute rescue operations to manage collateral and debt
+- Transfer assets out of your smart wallets
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get started with wallet connection, scanning, and your first recovery action
+  </Card>
+  <Card title="Prerequisites" icon="list-check" href="/prerequisites">
+    Required tools, supported chains, and what you need before using the recovery UI
+  </Card>
+  <Card title="Wallet Scanning" icon="magnifying-glass" href="/features/wallet-scanning">
+    Learn how to discover deployed loan wallets across multiple chains
+  </Card>
+  <Card title="Rescue Operations" icon="life-ring" href="/features/rescue-operations">
+    Execute repay, withdraw, and transfer operations on Aave and Morpho
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### Deterministic Address Derivation
+
+The app derives deterministic ZeroDev Kernel v3.3 smart account addresses from your EOA (Externally Owned Account) plus a wallet index. This allows you to recover access to any loan wallet created through the service.
+
+### Multi-Chain Scanning
+
+Scan index ranges across supported chains to find deployed loan wallets:
+- **Ethereum** (Chain ID: 1)
+- **Base** (Chain ID: 8453)
+- **Arbitrum** (Chain ID: 42161)
+- **BNB Chain** (Chain ID: 56)
+
+Scan up to 2,000 indices per run with filtering options to show only deployed wallets.
+
+### Protocol Integration
+
+**Aave V3**
+- Read loan positions (debt, collateral, health factor)
+- Repay debt
+- Withdraw collateral
+
+**Morpho Blue**
+- Read loan positions on supported market
+- Repay debt
+- Withdraw collateral
+- Market ID: `0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836`
+
+### Rescue Actions via ERC-4337
+
+All rescue operations are submitted through ERC-4337 UserOperations using EntryPoint v0.7:
+- Repay debt (sends 2 UserOps: approve + repay)
+- Withdraw collateral (sends 1 UserOp)
+- Transfer out token balances (sends 1 UserOp)
+
+### No Backend Dependencies
+
+The application runs entirely in your browser:
+- No API keys required for reading onchain positions
+- Direct blockchain interaction through your wallet
+- ZeroDev Project ID only needed when submitting rescue UserOperations
+- Complete transparency and auditability
+
+## Scope and Limitations
+
+<Warning>
+  **EVM Only**: This recovery UI supports EVM loans only. Solana loans are not supported.
+</Warning>
+
+The application is designed as a safety measure for scenarios where the main service is unavailable. It provides essential recovery functionality without the full feature set of the hosted platform.
+
+## Safety First
+
+<Warning>
+  - Never paste or type private keys into this app
+  - Always validate addresses, chain, and amounts before signing
+  - You are fully responsible for transaction execution and operational safety
+</Warning>
+
+All transaction signing happens in your connected wallet (MetaMask, Rabby, etc.). The recovery UI constructs the operations but never has access to your private keys.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Check Prerequisites" icon="clipboard-check" href="/prerequisites">
+    Ensure you have the required tools and setup
+  </Card>
+  <Card title="Start Recovery" icon="play" href="/quickstart">
+    Follow the quickstart guide to begin recovering your loans
+  </Card>
+</CardGroup>

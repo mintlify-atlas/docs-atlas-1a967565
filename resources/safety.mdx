@@ -1,0 +1,186 @@
+---
+title: Safety & Security
+description: Important safety information and best practices for using Borrow Recovery
+---
+
+Your security is paramount. Read and understand these safety guidelines before using Borrow Recovery.
+
+## Critical Safety Rules
+
+<Warning>
+  **Never paste or type private keys into this app.**
+
+  Private keys should only be imported into your wallet application (MetaMask, Rabby, etc.), never pasted into web applications. If anyone asks you to paste your private key, it's likely a scam.
+</Warning>
+
+<Warning>
+  **Always validate addresses, chain, and amounts before signing.**
+
+  Once you sign a transaction, it cannot be reversed. Double-check:
+  - The destination address is correct
+  - You're on the intended blockchain
+  - The token amounts are what you expect
+  - The action type matches your intention (repay vs. withdraw)
+</Warning>
+
+<Warning>
+  **You are fully responsible for transaction execution and operational safety.**
+
+  Borrow Recovery is a self-service tool with no backend, support staff, or safety nets. All transactions are executed by you and are your sole responsibility.
+</Warning>
+
+## Operational Best Practices
+
+Before executing any rescue action, complete this checklist:
+
+<Accordion title="Pre-Execution Checklist">
+  - [ ] Connected wallet is on the intended chain
+  - [ ] Loan wallet has enough native gas token for the transaction
+  - [ ] Repay token is funded to the loan wallet (for repay actions)
+  - [ ] Bundler input (ZeroDev Project ID) is set correctly
+  - [ ] Amount and action type are correct
+  - [ ] Full-withdraw or full-repay toggles are set as intended
+  - [ ] You've reviewed the transaction details in your wallet before signing
+</Accordion>
+
+## Gas Requirements
+
+<Note>
+  Each rescue action requires native gas tokens in your loan wallet:
+
+  - **Ethereum:** ETH
+  - **Base:** ETH
+  - **Arbitrum:** ETH
+  - **BNB Chain:** BNB
+
+  The app will display a "No gas" warning if insufficient gas is detected.
+</Note>
+
+## Wallet Connection Safety
+
+<Accordion title="Use the correct wallet">
+  **Critical:** You must connect the exact same EOA (Externally Owned Account) that was used to create the original loan.
+
+  **Correct workflow:**
+  1. Export your private key from Sats Terminal dashboard
+  2. Import it into MetaMask/Rabby
+  3. Connect that imported wallet to Borrow Recovery
+
+  **Why this matters:**
+  - Loan wallet addresses are derived deterministically from your EOA + wallet index
+  - Using a different EOA will generate completely different addresses
+  - You won't be able to access your actual loan wallet
+</Accordion>
+
+## Transaction Verification
+
+<Accordion title="How to verify transactions">
+  After executing any action:
+
+  1. **Check the UserOp hash** displayed in the UI
+  2. **Verify on a block explorer** that the transaction succeeded
+  3. **Click "Load positions"** again to confirm balances updated correctly
+  4. **Verify token amounts** match what you expected
+
+  If something looks wrong, stop and investigate before proceeding with additional actions.
+</Accordion>
+
+## Repay Action Risks
+
+<Warning>
+  When using "Repay all" functionality:
+
+  - Interest accrues in real time
+  - Debt increases slightly between loading positions and executing the repay
+  - **Keep 0.5-1% extra loan token** in the wallet to account for accrued interest
+  - Otherwise, the repay may fail with "insufficient balance"
+</Warning>
+
+## Data Privacy
+
+<Info>
+  Borrow Recovery is frontend-only:
+
+  - No backend server processes your data
+  - No database stores your information
+  - All operations happen locally in your browser
+  - All signatures happen in your connected wallet
+  - No third party has access to your keys or transactions
+</Info>
+
+## Protocol-Specific Notes
+
+<Accordion title="Aave V3 Safety">
+  - **Repay** sends 2 UserOperations (approve + repay)
+  - **Withdraw** sends 1 UserOperation
+  - Ensure you don't withdraw so much collateral that your position becomes unhealthy
+  - If you have remaining debt, maintain adequate collateralization ratio
+</Accordion>
+
+<Accordion title="Morpho Blue Safety">
+  - Uses market ID: `0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836`
+  - Same repay/withdraw mechanics as Aave
+  - If USD values show "—", click "Load positions" again before proceeding
+</Accordion>
+
+## Bundler Configuration
+
+<Note>
+  Your ZeroDev Project ID or bundler RPC URL is used to submit UserOperations.
+
+  **Keep it safe:**
+  - Don't share your Project ID publicly
+  - Use your own ZeroDev account
+  - Don't use someone else's bundler URL
+
+  The bundler cannot access your funds but could potentially see your transaction patterns.
+</Note>
+
+## Emergency Scenarios
+
+<Accordion title="If you make a mistake">
+  Blockchain transactions are irreversible. If you:
+
+  - Send to the wrong address: **Cannot be undone**
+  - Use the wrong amount: **Cannot be undone**
+  - Execute on the wrong chain: **Cannot be undone**
+
+  **Prevention is your only protection:**
+  - Double-check everything before signing
+  - Start with small test amounts if possible
+  - Verify addresses using multiple sources
+</Accordion>
+
+<Accordion title="If the app is unavailable">
+  Borrow Recovery itself is a recovery tool, but if it becomes unavailable:
+
+  - Your loan wallet is a standard ZeroDev Kernel v3.3 account
+  - You can interact with it using other ERC-4337 tools
+  - Your funds are not locked in the app
+  - The smart account contracts are deployed onchain and don't depend on this UI
+</Accordion>
+
+## Disclaimer
+
+<Warning>
+  This software is provided as-is, without warranties of any kind.
+
+  You are solely responsible for:
+  - Validating all transaction details before signing
+  - Ensuring operational safety
+  - Understanding the risks of DeFi and smart contract interactions
+  - Any losses that may occur from using this tool
+
+  By using Borrow Recovery, you acknowledge that you understand these risks and accept full responsibility for your actions.
+</Warning>
+
+## Questions?
+
+If you're unsure about any safety aspect:
+
+1. **Stop and research** before proceeding
+2. **Test with small amounts** first when possible
+3. **Verify everything** multiple times
+4. **Never rush** through transaction signing
+
+Remember: In crypto, you are your own bank. That means you're also your own security team.

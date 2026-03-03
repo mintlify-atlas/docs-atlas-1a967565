@@ -1,0 +1,257 @@
+---
+title: "Aave Protocol API"
+description: "Aave v3 Pool interaction utilities for encoding and decoding protocol calls"
+---
+
+## Overview
+
+Utilities for encoding Aave v3 Pool function calls and decoding responses. Supports repayment, withdrawal, and account data queries.
+
+## Functions
+
+### encodeAaveRepay
+
+Encodes calldata for the Aave Pool `repay()` function.
+
+```typescript
+function encodeAaveRepay(params: {
+  asset: Address;
+  amount: bigint;
+  interestRateMode: bigint;
+  onBehalfOf: Address;
+}): Hex
+```
+
+<ParamField path="asset" type="Address" required>
+  The address of the reserve asset to repay
+</ParamField>
+
+<ParamField path="amount" type="bigint" required>
+  The amount to repay (in asset's smallest unit). Use `MAX_UINT256` to repay entire debt
+</ParamField>
+
+<ParamField path="interestRateMode" type="bigint" required>
+  The interest rate mode: `1n` for stable rate, `2n` for variable rate
+</ParamField>
+
+<ParamField path="onBehalfOf" type="Address" required>
+  The address of the user whose debt will be repaid
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  Encoded calldata for Pool.repay()
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { encodeAaveRepay, MAX_UINT256 } from "@/lib/protocols/aave";
+
+const repayCalldata = encodeAaveRepay({
+  asset: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
+  amount: MAX_UINT256, // Repay entire debt
+  interestRateMode: 2n, // Variable rate
+  onBehalfOf: "0x1234...",
+});
+```
+
+### encodeAaveWithdraw
+
+Encodes calldata for the Aave Pool `withdraw()` function.
+
+```typescript
+function encodeAaveWithdraw(params: {
+  asset: Address;
+  amount: bigint;
+  to: Address;
+}): Hex
+```
+
+<ParamField path="asset" type="Address" required>
+  The address of the reserve asset to withdraw
+</ParamField>
+
+<ParamField path="amount" type="bigint" required>
+  The amount to withdraw (in asset's smallest unit)
+</ParamField>
+
+<ParamField path="to" type="Address" required>
+  The address that will receive the withdrawn assets
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  Encoded calldata for Pool.withdraw()
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { encodeAaveWithdraw } from "@/lib/protocols/aave";
+
+const withdrawCalldata = encodeAaveWithdraw({
+  asset: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", // WBTC
+  amount: 100000000n, // 1 WBTC (8 decimals)
+  to: "0x5678...",
+});
+```
+
+### encodeAaveGetUserAccountData
+
+Encodes calldata for the Aave Pool `getUserAccountData()` view function.
+
+```typescript
+function encodeAaveGetUserAccountData(user: Address): Hex
+```
+
+<ParamField path="user" type="Address" required>
+  The address of the user to query
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  Encoded calldata for Pool.getUserAccountData()
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { encodeAaveGetUserAccountData } from "@/lib/protocols/aave";
+
+const calldata = encodeAaveGetUserAccountData("0x1234...");
+// Use with eth_call to read user's account data
+```
+
+### decodeAaveGetUserAccountData
+
+Decodes the result from `getUserAccountData()` view function.
+
+```typescript
+function decodeAaveGetUserAccountData(result: Hex): AaveUserAccountData
+```
+
+<ParamField path="result" type="Hex" required>
+  The raw return data from Pool.getUserAccountData()
+</ParamField>
+
+<ResponseField name="returns" type="AaveUserAccountData">
+  Decoded user account data object
+</ResponseField>
+
+**Example:**
+
+```typescript
+import {
+  encodeAaveGetUserAccountData,
+  decodeAaveGetUserAccountData,
+} from "@/lib/protocols/aave";
+import { jsonRpcFetch } from "@/lib/rpc/jsonRpc";
+
+const calldata = encodeAaveGetUserAccountData("0x1234...");
+const result = await jsonRpcFetch<Hex>(rpcUrl, "eth_call", [
+  { to: aavePoolAddress, data: calldata },
+  "latest",
+]);
+
+const accountData = decodeAaveGetUserAccountData(result);
+console.log(accountData.healthFactor); // e.g., 1500000000000000000n (1.5)
+```
+
+### encodeAaveGetReserveTokensAddresses
+
+Encodes calldata for the Aave Pool `getReserveTokensAddresses()` view function.
+
+```typescript
+function encodeAaveGetReserveTokensAddresses(asset: Address): Hex
+```
+
+<ParamField path="asset" type="Address" required>
+  The address of the reserve asset
+</ParamField>
+
+<ResponseField name="returns" type="Hex">
+  Encoded calldata for Pool.getReserveTokensAddresses()
+</ResponseField>
+
+### decodeAaveGetReserveTokensAddresses
+
+Decodes the result from `getReserveTokensAddresses()` view function.
+
+```typescript
+function decodeAaveGetReserveTokensAddresses(result: Hex): {
+  aTokenAddress: Address;
+  stableDebtTokenAddress: Address;
+  variableDebtTokenAddress: Address;
+}
+```
+
+<ParamField path="result" type="Hex" required>
+  The raw return data from Pool.getReserveTokensAddresses()
+</ParamField>
+
+<ResponseField name="returns" type="object">
+  Object containing the three token addresses for the reserve
+</ResponseField>
+
+## Type Definitions
+
+### AaveUserAccountData
+
+User's account summary data from Aave v3.
+
+```typescript
+type AaveUserAccountData = {
+  totalCollateralBase: bigint;
+  totalDebtBase: bigint;
+  availableBorrowsBase: bigint;
+  currentLiquidationThreshold: bigint;
+  ltv: bigint;
+  healthFactor: bigint;
+};
+```
+
+<ParamField path="totalCollateralBase" type="bigint">
+  Total collateral in base currency units (e.g., USD with 8 decimals)
+</ParamField>
+
+<ParamField path="totalDebtBase" type="bigint">
+  Total debt in base currency units
+</ParamField>
+
+<ParamField path="availableBorrowsBase" type="bigint">
+  Available borrowing capacity in base currency units
+</ParamField>
+
+<ParamField path="currentLiquidationThreshold" type="bigint">
+  Weighted average liquidation threshold (in basis points, e.g., 8500 = 85%)
+</ParamField>
+
+<ParamField path="ltv" type="bigint">
+  Weighted average loan-to-value ratio (in basis points)
+</ParamField>
+
+<ParamField path="healthFactor" type="bigint">
+  Health factor with 18 decimals (e.g., 1.5 = 1500000000000000000n). Below 1.0 means liquidatable
+</ParamField>
+
+## Constants
+
+### MAX_UINT256
+
+```typescript
+const MAX_UINT256: bigint = 2n ** 256n - 1n
+```
+
+Maximum uint256 value, commonly used as `amount` parameter to repay or withdraw the entire balance.
+
+**Example:**
+
+```typescript
+import { encodeAaveRepay, MAX_UINT256 } from "@/lib/protocols/aave";
+
+// Repay entire debt
+const calldata = encodeAaveRepay({
+  asset: usdcAddress,
+  amount: MAX_UINT256,
+  interestRateMode: 2n,
+  onBehalfOf: userAddress,
+});
+```

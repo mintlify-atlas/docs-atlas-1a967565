@@ -1,0 +1,328 @@
+---
+title: "Aave V3 Operations"
+description: "Guide to repaying debt and withdrawing collateral from Aave V3 using Borrow Recovery"
+---
+
+This guide explains how to execute Aave V3 rescue operations on your loan wallet, including repaying debt and withdrawing collateral.
+
+## Supported Chains
+
+Aave V3 rescue operations are available on:
+
+- **Ethereum** (Chain ID: 1)
+- **Base** (Chain ID: 8453)
+- **Arbitrum** (Chain ID: 42161)
+- **BNB Chain** (Chain ID: 56)
+
+## Understanding Aave Positions
+
+### Account Data
+
+When you load positions, the app reads your Aave account data using the `getUserAccountData` function:
+
+```typescript
+function getUserAccountData(address user) view returns (
+  uint256 totalCollateralBase,
+  uint256 totalDebtBase,
+  uint256 availableBorrowsBase,
+  uint256 currentLiquidationThreshold,
+  uint256 ltv,
+  uint256 healthFactor
+)
+```
+
+### Health Factor
+
+Your **health factor** determines your loan's safety:
+
+- **Above 1.0**: Position is healthy
+- **Below 1.0**: Position is at risk of liquidation
+- **Health Factor = ∞**: No outstanding debt
+
+The health factor is calculated as:
+
+```
+Health Factor = (Collateral × Liquidation Threshold) / Total Debt
+```
+
+<Warning>
+  If your health factor falls below 1.0, your position can be liquidated. Always monitor your health factor when withdrawing collateral.
+</Warning>
+
+## Aave Rescue Actions
+
+### Withdraw Collateral
+
+Withdraw collateral tokens from Aave V3 Pool to your connected wallet.
+
+<Steps>
+  <Step title="Select Action">
+    In the Aave rescue actions section:
+    1. Set **Action** dropdown to **Withdraw collateral**
+    2. Choose **Withdraw all** or enter a custom amount
+  </Step>
+
+  <Step title="Execute Withdrawal">
+    Click **Execute Aave action via Kernel**
+
+    This submits a single UserOperation that calls:
+    ```typescript
+    Pool.withdraw(
+      asset: collateralAssetAddress,
+      amount: withdrawAmount,
+      to: yourConnectedWalletAddress
+    )
+    ```
+  </Step>
+
+  <Step title="Confirm Result">
+    - The app displays the UserOp hash
+    - Wait for confirmation
+    - Click **Load positions** to verify the updated collateral balance
+  </Step>
+</Steps>
+
+<Note>
+  Withdrawn collateral is sent directly to your connected EOA wallet, not the Kernel wallet.
+</Note>
+
+### Repay Debt
+
+Repay outstanding debt to Aave V3 Pool.
+
+<Steps>
+  <Step title="Fund the Wallet">
+    Before repaying, ensure your Kernel wallet has enough repay token (USDC, USDT, etc.).
+
+    <Warning>
+      When using **Repay all**, keep extra repay token in the wallet. Interest accrues in real time, so debt can increase slightly before execution.
+    </Warning>
+  </Step>
+
+  <Step title="Select Action">
+    In the Aave rescue actions section:
+    1. Set **Action** dropdown to **Repay debt**
+    2. Choose **Repay all** or enter a custom amount
+  </Step>
+
+  <Step title="Execute Repay">
+    Click **Execute Aave action via Kernel**
+
+    This submits **two sequential UserOperations**:
+
+    **Step 1/2: Approve**
+    ```typescript
+    // Approve Aave Pool to spend repay token
+    repayToken.approve(
+      spender: aavePoolAddress,
+      amount: MAX_UINT256
+    )
+    ```
+
+    **Step 2/2: Repay**
+    ```typescript
+    // Repay debt to Aave Pool
+    Pool.repay(
+      asset: repayAssetAddress,
+      amount: repayAmount,
+      interestRateMode: 2, // Variable rate
+      onBehalfOf: kernelWalletAddress
+    )
+    ```
+
+    The app waits for the approve UserOp to be mined before submitting the repay UserOp.
+  </Step>
+
+  <Step title="Confirm Result">
+    - The app displays status for both steps
+    - Final UserOp hash is shown after repay submission
+    - Click **Load positions** to verify the reduced debt balance
+  </Step>
+</Steps>
+
+## Code Examples
+
+### Reading Aave Position Data
+
+The app reads your Aave position by calling the Pool contract:
+
+```typescript
+import { encodeAaveGetUserAccountData } from "@/lib/protocols/aave";
+
+const callData = encodeAaveGetUserAccountData(kernelAddress);
+
+const result = await provider.request({
+  method: "eth_call",
+  params: [
+    {
+      to: aavePoolAddress,
+      data: callData,
+    },
+    "latest",
+  ],
+});
+
+// Decode the result
+const accountData = decodeAaveGetUserAccountData(result);
+// accountData.healthFactor
+// accountData.totalDebtBase
+// accountData.totalCollateralBase
+```
+
+### Encoding Withdraw Call
+
+From `lib/protocols/aave.ts`:
+
+```typescript
+export function encodeAaveWithdraw(params: {
+  asset: Address;
+  amount: bigint;
+  to: Address;
+}): Hex {
+  return encodeFunctionData({
+    abi: aavePoolAbi,
+    functionName: "withdraw",
+    args: [params.asset, params.amount, params.to],
+  });
+}
+```
+
+### Encoding Repay Call
+
+From `lib/protocols/aave.ts`:
+
+```typescript
+export function encodeAaveRepay(params: {
+  asset: Address;
+  amount: bigint;
+  interestRateMode: bigint; // 2 for variable rate
+  onBehalfOf: Address;
+}): Hex {
+  return encodeFunctionData({
+    abi: aavePoolAbi,
+    functionName: "repay",
+    args: [
+      params.asset,
+      params.amount,
+      params.interestRateMode,
+      params.onBehalfOf,
+    ],
+  });
+}
+```
+
+### Full Repay Flow
+
+From `app/wallet/[index]/_components/AaveRescueActions.tsx`:
+
+```typescript
+// Step 1: Approve repay token to Aave Pool
+const approveCallData = encodeErc20Approve(poolAddress, MAX_UINT256);
+const approveKernelCallData = await encodeKernelExecuteCalls([
+  { target: repayAsset.address, callData: approveCallData, value: 0n },
+]);
+
+const approveHash = await submitKernelUserOperationV07({
+  bundlerUrl,
+  chainRpcUrl: chain.rpcUrl,
+  owner,
+  kernelAddress,
+  chainId,
+  kernelCallData: approveKernelCallData,
+  request,
+  onStatus: (s) => setStatus(`Step 1/2: ${s}`),
+});
+
+// Wait for approve to be mined
+await waitForUserOp(bundlerUrl, approveHash);
+
+// Step 2: Repay debt
+const repayCallData = encodeAaveRepay({
+  asset: repayAsset.address,
+  amount: rawAmount,
+  interestRateMode: 2n, // Variable
+  onBehalfOf: kernelAddress,
+});
+
+const repayKernelCallData = await encodeKernelExecuteCalls([
+  { target: poolAddress, callData: repayCallData, value: 0n },
+]);
+
+const repayHash = await submitKernelUserOperationV07({
+  bundlerUrl,
+  chainRpcUrl: chain.rpcUrl,
+  owner,
+  kernelAddress,
+  chainId,
+  kernelCallData: repayKernelCallData,
+  request,
+  onStatus: (s) => setStatus(`Step 2/2: ${s}`),
+});
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Monitor Health Factor">
+    Always check your health factor before and after withdrawing collateral:
+    - A health factor above 1.5 provides a comfortable safety margin
+    - Never withdraw collateral that would drop your health factor below 1.2
+    - Consider market volatility when planning withdrawals
+  </Accordion>
+
+  <Accordion title="Partial vs Full Repayment">
+    **Full repayment** (`Repay all` toggle):
+    - Uses `MAX_UINT256` as the amount
+    - Aave interprets this as "repay entire debt"
+    - Always fund extra tokens to account for accrued interest
+
+    **Partial repayment** (custom amount):
+    - Specify exact amount in token decimals
+    - Useful for reducing debt while maintaining leverage
+    - Check remaining debt after execution
+  </Accordion>
+
+  <Accordion title="Gas Optimization">
+    - Withdraw operations: 1 UserOp (~150k gas)
+    - Repay operations: 2 UserOps (~350k total gas)
+    - Ensure sufficient native token balance for gas
+    - The app adds a 50% buffer to gas estimates
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="'Insufficient balance' error">
+    For repay operations:
+    - Check that the Kernel wallet has enough repay token
+    - If using **Repay all**, add 1-2% extra to cover interest accrual
+    - Verify token balance with **Load positions**
+  </Accordion>
+
+  <Accordion title="'Health factor too low' error">
+    Aave prevents withdrawals that would cause liquidation:
+    - Reduce withdrawal amount
+    - Repay some debt first to improve health factor
+    - Add more collateral before withdrawing
+  </Accordion>
+
+  <Accordion title="Approve UserOp reverted">
+    If Step 1/2 (approve) fails:
+    - Check that the Kernel wallet is deployed on this chain
+    - Verify sufficient gas token balance
+    - Try again with fresh gas price estimation
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Wallet Recovery" icon="wallet" href="/guides/wallet-recovery">
+    Return to the full recovery workflow
+  </Card>
+
+  <Card title="Morpho Operations" icon="vault" href="/guides/morpho-operations">
+    Learn about Morpho Blue rescue actions
+  </Card>
+</CardGroup>

@@ -1,0 +1,387 @@
+---
+title: "Bundler Configuration"
+description: "Complete guide to configuring ZeroDev bundler for submitting UserOperations"
+---
+
+This guide explains how to configure the bundler for submitting ERC-4337 UserOperations, including obtaining a ZeroDev Project ID, understanding gas estimation, and troubleshooting common issues.
+
+## What is a Bundler?
+
+A **bundler** is an ERC-4337 service that:
+
+- Accepts UserOperations from clients
+- Validates UserOperations against EntryPoint rules
+- Bundles multiple UserOperations into a single transaction
+- Submits the bundle to the blockchain
+- Handles gas price estimation and nonce management
+
+Borrow Recovery uses **ZeroDev's bundler service** to submit rescue operations as UserOperations.
+
+## Getting Your ZeroDev Project ID
+
+<Steps>
+  <Step title="Access ZeroDev Dashboard">
+    Open [https://dashboard.zerodev.app/projects/general](https://dashboard.zerodev.app/projects/general) and sign in.
+  </Step>
+
+  <Step title="Select or Create Project">
+    - If you have existing projects, select one from the list
+    - If you have no projects, click **Create New Project**
+    - The project name and settings don't affect recovery operations
+  </Step>
+
+  <Step title="Copy Project ID">
+    On the project page, find the **Project ID** displayed in the top-right corner.
+
+    It looks like: `a1b2c3d4-5678-90ab-cdef-1234567890ab`
+
+    Click the copy icon to copy the Project ID to your clipboard.
+  </Step>
+
+  <Step title="Enter in Recovery App">
+    In the Borrow Recovery app, paste your Project ID into the **ZeroDev Project ID or RPC URL** field.
+
+    The app will automatically construct the full bundler URL:
+    ```
+    https://rpc.zerodev.app/api/v3/<project-id>/chain/<chain-id>
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  You can also paste a full bundler URL directly if you prefer to manage the chain ID yourself.
+</Tip>
+
+## Alternative: Full Bundler URL
+
+Instead of just the Project ID, you can provide a complete bundler URL:
+
+```
+https://rpc.zerodev.app/api/v3/<project-id>/chain/<chain-id>
+```
+
+**Example for Base (chain 8453)**:
+```
+https://rpc.zerodev.app/api/v3/a1b2c3d4-5678-90ab-cdef-1234567890ab/chain/8453
+```
+
+<Note>
+  Using just the Project ID is recommended. The app automatically switches the chain ID in the URL when you change chains.
+</Note>
+
+## UserOperation Submission Flow
+
+When you execute a rescue action, the app submits a UserOperation through this flow:
+
+<Steps>
+  <Step title="Check Wallet Deployment">
+    Verify the Kernel wallet is deployed on the chain:
+    ```typescript
+    const kernelCode = await request("eth_getCode", [kernelAddress, "latest"]);
+    if (kernelCode === "0x") {
+      throw new Error("Kernel wallet is not deployed on this chain.");
+    }
+    ```
+  </Step>
+
+  <Step title="Read Nonce">
+    Fetch the current nonce for the Kernel wallet:
+    ```typescript
+    const kernelNonceKey = encodeKernelV07NonceKey(ECDSA_VALIDATOR_ADDRESS);
+    const nonce = await readKernelNonce({
+      chainRpcUrl,
+      request,
+      kernelAddress,
+      nonceKey: kernelNonceKey,
+    });
+    ```
+  </Step>
+
+  <Step title="Get Gas Prices">
+    Request gas prices from the bundler or chain:
+    ```typescript
+    // Try bundler-specific methods first
+    const bundlerGas = await getBundlerUserOpGasPrice(bundlerUrl);
+    // zd_getUserOperationGasPrice or pimlico_getUserOperationGasPrice
+
+    // Fallback to chain RPC
+    if (!bundlerGas) {
+      const gasPrice = await jsonRpcFetch(chainRpcUrl, "eth_gasPrice");
+      const tip = await jsonRpcFetch(chainRpcUrl, "eth_maxPriorityFeePerGas");
+    }
+    ```
+
+    Gas prices are bumped by 10-20% to handle price increases.
+  </Step>
+
+  <Step title="Build UserOperation">
+    Construct the base UserOperation:
+    ```typescript
+    const userOp: UserOperationV07 = {
+      sender: kernelAddress,
+      nonce: nonce,
+      callData: kernelCallData,
+      callGasLimit: 0n,
+      verificationGasLimit: 0n,
+      preVerificationGas: 0n,
+      maxFeePerGas: maxFeePerGas,
+      maxPriorityFeePerGas: maxPriorityFeePerGas,
+      signature: DUMMY_ECDSA_SIG,
+    };
+    ```
+  </Step>
+
+  <Step title="Estimate Gas">
+    Request gas estimation from the bundler:
+    ```typescript
+    const estimate = await jsonRpcFetch(
+      bundlerUrl,
+      "eth_estimateUserOperationGas",
+      [toRpcOp(userOp), ENTRYPOINT_V07_ADDRESS]
+    );
+    // Returns: { callGasLimit, verificationGasLimit, preVerificationGas }
+    ```
+
+    The app adds a **50% buffer** to all gas limits:
+    ```typescript
+    const buffered = (estimate.callGasLimit * 150n) / 100n;
+    ```
+  </Step>
+
+  <Step title="Sign UserOperation">
+    Sign the UserOperation hash with your wallet:
+    ```typescript
+    const userOpHash = getUserOperationHashV07({
+      userOperation: userOp,
+      entryPointAddress: ENTRYPOINT_V07_ADDRESS,
+      chainId,
+    });
+
+    const signature = await request("personal_sign", [userOpHash, owner]);
+    ```
+  </Step>
+
+  <Step title="Submit to Bundler">
+    Send the signed UserOperation:
+    ```typescript
+    const userOpHash = await jsonRpcFetch(
+      bundlerUrl,
+      "eth_sendUserOperation",
+      [signedUserOp, ENTRYPOINT_V07_ADDRESS]
+    );
+    ```
+  </Step>
+</Steps>
+
+## Gas Estimation Details
+
+### Gas Components
+
+Each UserOperation has three gas parameters:
+
+| Parameter | Description | Typical Value |
+|-----------|-------------|---------------|
+| **callGasLimit** | Gas for executing the call | 80,000 - 200,000 |
+| **verificationGasLimit** | Gas for validating the signature | 150,000 - 300,000 |
+| **preVerificationGas** | Gas for bundler overhead | 40,000 - 60,000 |
+
+### Buffering Strategy
+
+From `lib/accountAbstraction/submitUserOpV07.ts`:
+
+```typescript
+// Add 50% buffer to gas limits — bundler estimates can be tight,
+// and state may change between estimation and submission
+// (interest accrual, gas price shifts).
+const addBuffer = (value: bigint): bigint => (value * 150n) / 100n;
+
+const callGasLimit = addBuffer(rawCallGas);
+const verificationGasLimit = addBuffer(rawVerificationGas);
+const preVerificationGas = addBuffer(rawPreVerificationGas);
+```
+
+### Gas Price Bumping
+
+The app applies gas price buffers:
+
+```typescript
+// Bundler gas prices get 10% bump
+if (bundlerGas) {
+  maxFeePerGas = (bundlerGas.maxFeePerGas * 110n) / 100n;
+  maxPriorityFeePerGas = (bundlerGas.maxPriorityFeePerGas * 110n) / 100n;
+}
+
+// Chain RPC fallback gets 20% bump
+else {
+  maxFeePerGas = (chainGasPrice * 120n) / 100n;
+}
+```
+
+## Retry Logic
+
+### Nonce Conflicts
+
+If a nonce error occurs (AA25), the app refreshes and retries:
+
+```typescript
+if (isInvalidAccountNonceError(sendError) && !nonceRetryUsed) {
+  nonceRetryUsed = true;
+  onStatus?.("Nonce changed before submission. Refreshing and retrying…");
+  
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  nonce = await readKernelNonce(/* ... */);
+  
+  // Re-estimate with new nonce
+  const refreshedEstimate = await estimateWithNonceRetry(buildOpBase(nonce));
+  opForSend = withBufferedGasLimits(refreshedEstimate.baseOp, refreshedEstimate.estimate);
+}
+```
+
+### Gas Price Too Low
+
+If the bundler rejects due to low gas price:
+
+```typescript
+const minRequiredMaxFeePerGas = extractMinRequiredMaxFeePerGas(sendError);
+if (minRequiredMaxFeePerGas !== null && !gasRetryUsed) {
+  const bumpedMaxFeePerGas = (minRequiredMaxFeePerGas * 110n) / 100n;
+  opForSend = {
+    ...opForSend,
+    maxFeePerGas: bumpedMaxFeePerGas,
+    maxPriorityFeePerGas: /* adjusted */,
+  };
+  gasRetryUsed = true;
+}
+```
+
+## Signature Methods
+
+The app tries multiple signature methods for compatibility:
+
+```typescript
+const signingAttempts = [
+  { method: "personal_sign", params: [userOpHash, owner] },
+  { method: "personal_sign", params: [owner, userOpHash] }, // Reversed order
+  { method: "eth_sign", params: [owner, userOpHash] },
+];
+
+for (const attempt of signingAttempts) {
+  try {
+    return await request(attempt.method, attempt.params);
+  } catch (error) {
+    if (isUserRejectedError(error)) throw error;
+    if (!isSignatureMethodCompatibilityError(error)) throw error;
+    // Try next method
+  }
+}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="'Kernel wallet is not deployed on this chain' error">
+    The wallet address has no code on the current chain:
+    
+    - Verify you're on the correct chain
+    - Check that you've used this wallet index on this chain before
+    - The wallet must have been deployed through a previous transaction
+  </Accordion>
+
+  <Accordion title="'Invalid account nonce' (AA25) error">
+    The nonce in your UserOperation doesn't match the on-chain nonce:
+    
+    - The app automatically retries once with refreshed nonce
+    - This can happen if another transaction was submitted between estimation and sending
+    - Wait a few seconds and try again
+  </Accordion>
+
+  <Accordion title="'maxFeePerGas must be at least X' error">
+    The bundler requires higher gas prices:
+    
+    - The app automatically retries with bumped gas price (110%)
+    - This happens during periods of high network congestion
+    - The retry usually succeeds
+  </Accordion>
+
+  <Accordion title="Gas estimation returns very high values">
+    Some bundlers return inflated estimates:
+    
+    - The app uses fallback values if estimates seem unreasonable
+    - Default fallbacks: callGas=80k, verificationGas=250k, preVerificationGas=40k
+    - These are then buffered by 50%
+  </Accordion>
+
+  <Accordion title="'User rejected' error during signing">
+    You declined the signature request in your wallet:
+    
+    - Click the rescue action button again
+    - Approve the signature request when it appears
+    - The signature is for the UserOperation hash, not a transaction
+  </Accordion>
+</AccordionGroup>
+
+## Security Considerations
+
+<Warning>
+  **Bundler Trust Assumptions**
+  
+  - The bundler can see your UserOperation before submission
+  - Use only trusted bundler services (like ZeroDev)
+  - Never send UserOperations containing sensitive data
+  - Validate all transaction results on-chain
+</Warning>
+
+<Note>
+  **No Paymaster = You Pay Gas**
+  
+  Unlike typical account abstraction apps, Borrow Recovery doesn't use a paymaster. You must fund your Kernel wallet with native tokens to pay for UserOperation gas.
+</Note>
+
+## Advanced Configuration
+
+### Custom Bundler Providers
+
+While ZeroDev is recommended, you can use any ERC-4337 v0.7 compatible bundler:
+
+```
+https://your-bundler.example.com/rpc
+```
+
+Requirements:
+- Must support EntryPoint v0.7
+- Must implement `eth_estimateUserOperationGas`
+- Must implement `eth_sendUserOperation`
+- Optionally: `zd_getUserOperationGasPrice` or `pimlico_getUserOperationGasPrice`
+
+### Reading UserOperation Receipt
+
+After submission, you can check the status:
+
+```typescript
+const receipt = await fetch(bundlerUrl, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "eth_getUserOperationReceipt",
+    params: [userOpHash],
+  }),
+});
+
+const result = await receipt.json();
+// result.result.receipt.transactionHash
+// result.result.success
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Wallet Recovery" icon="wallet" href="/guides/wallet-recovery">
+    Return to the full recovery workflow
+  </Card>
+
+  <Card title="Aave Operations" icon="coins" href="/guides/aave-operations">
+    Execute Aave V3 rescue actions
+  </Card>
+</CardGroup>
